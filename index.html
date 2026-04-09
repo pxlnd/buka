@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Buka - Color Gates</title>
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+  <main class="game-shell">
+    <header class="game-header">
+      <div class="header-left">
+        <button class="icon-btn" id="backBtn" aria-label="Назад">⬅</button>
+        <h1 class="level-title" id="levelLabel">LEVEL 1</h1>
+      </div>
+      <div class="header-actions">
+        <button class="reset-btn" id="restartBtn">Начать заново</button>
+      </div>
+    </header>
+
+    <section class="progress-wrap" aria-label="Прогресс этапов">
+      <div class="progress-line"></div>
+      <div class="progress-steps" id="progressSteps"></div>
+    </section>
+
+    <section class="board-card">
+      <canvas id="gameCanvas"></canvas>
+    </section>
+
+    <p class="status" id="statusText">Потяните шар и отпустите, чтобы выстрелить в противоположную сторону.</p>
+  </main>
+
+  <aside class="debug-panel" id="debugPanel" aria-label="Панель генератора уровней">
+    <div class="debug-head">
+      <h2>Генератор уровней</h2>
+      <button class="panel-close" id="debugCloseBtn" type="button">✕</button>
+    </div>
+
+    <p class="debug-hint">
+      В режиме редактора стрельба отключается. Клик по полю применяет выбранный инструмент.
+    </p>
+
+    <label class="debug-row debug-row-inline">
+      <span>Режим редактора</span>
+      <input id="debugEditorMode" type="checkbox">
+    </label>
+
+    <div class="debug-grid">
+      <label class="debug-row">
+        <span>Уровень</span>
+        <select id="debugLevelSelect"></select>
+      </label>
+
+      <label class="debug-row">
+        <span>Этап</span>
+        <select id="debugStageSelect"></select>
+      </label>
+
+      <label class="debug-row">
+        <span>Номер уровня</span>
+        <input id="debugLevelNumber" type="number" min="1" step="1" value="1">
+      </label>
+
+      <button class="small-btn" id="debugLoadLevelBtn" type="button">Загрузить</button>
+      <button class="small-btn" id="debugNewLevelBtn" type="button">Новый уровень</button>
+      <button class="small-btn" id="debugClearStageBtn" type="button">Очистить этап</button>
+    </div>
+
+    <div class="debug-section">
+      <h3>Шар</h3>
+      <label class="debug-row">
+        <span>Цвет шара</span>
+        <select id="debugBallColor"></select>
+      </label>
+    </div>
+
+    <div class="debug-section">
+      <h3>Инструмент</h3>
+      <div class="tool-row" id="debugToolRow">
+        <button class="tool-btn is-active" data-tool="start" type="button">Старт</button>
+        <button class="tool-btn" data-tool="gate" type="button">Ворота</button>
+        <button class="tool-btn" data-tool="polygon" type="button">Полигон</button>
+        <button class="tool-btn" data-tool="obstacle" type="button">Препятствие</button>
+        <button class="tool-btn" data-tool="erase" type="button">Стереть</button>
+      </div>
+    </div>
+
+    <div class="debug-section">
+      <h3>Полигон поля</h3>
+      <div class="debug-grid">
+        <button class="small-btn" id="debugResetPolygonBtn" type="button">Сброс к прямоугольнику</button>
+      </div>
+      <ul class="debug-list" id="debugVertexList"></ul>
+    </div>
+
+    <div class="debug-section" id="debugGateControls">
+      <h3>Настройка ворот</h3>
+      <div class="debug-grid compact-grid">
+        <label class="debug-row">
+          <span>Ребро</span>
+          <select id="debugGateSide">
+            <option value="auto">auto</option>
+          </select>
+        </label>
+
+        <label class="debug-row">
+          <span>Цвет</span>
+          <select id="debugGateColor"></select>
+        </label>
+
+        <label class="debug-row">
+          <span>Размер (0.05-0.95)</span>
+          <input id="debugGateSize" type="number" min="0.05" max="0.95" step="0.01" value="0.24">
+        </label>
+
+        <label class="debug-row">
+          <span>Количество</span>
+          <input id="debugGateCount" type="number" min="1" max="8" step="1" value="1">
+        </label>
+      </div>
+    </div>
+
+    <div class="debug-section">
+      <h3>Ворота этапа</h3>
+      <ul class="debug-list" id="debugGateList"></ul>
+    </div>
+
+    <div class="debug-section">
+      <h3>Препятствия этапа</h3>
+      <div class="debug-grid">
+        <button class="small-btn" id="debugObstacleStartBtn" type="button">Новое препятствие</button>
+        <button class="small-btn" id="debugObstacleFinishBtn" type="button">Завершить полигон</button>
+        <button class="small-btn" id="debugObstacleCancelBtn" type="button">Отмена черновика</button>
+      </div>
+      <ul class="debug-list" id="debugObstacleList"></ul>
+      <ul class="debug-list" id="debugObstacleVertexList"></ul>
+    </div>
+
+    <div class="debug-actions">
+      <button class="save-btn" id="debugSaveBtn" type="button">Сохранить уровень в JSON</button>
+    </div>
+
+    <p class="debug-status" id="debugStatus">Панель готова.</p>
+  </aside>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
