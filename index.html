@@ -9,25 +9,18 @@
 <body>
   <main class="game-shell">
     <header class="game-header">
-      <div class="header-left">
         <button class="icon-btn" id="backBtn" aria-label="Назад">⬅</button>
         <h1 class="level-title" id="levelLabel">LEVEL 1</h1>
-      </div>
-      <div class="header-actions">
-        <button class="reset-btn" id="restartBtn">Начать заново</button>
-      </div>
+        <button class="reset-btn" id="restartBtn" aria-label="Начать заново" title="Начать заново">↻</button>
     </header>
 
     <section class="progress-wrap" aria-label="Прогресс этапов">
-      <div class="progress-line"></div>
       <div class="progress-steps" id="progressSteps"></div>
     </section>
 
     <section class="board-card">
       <canvas id="gameCanvas"></canvas>
     </section>
-
-    <p class="status" id="statusText">Потяните шар и отпустите, чтобы выстрелить в противоположную сторону.</p>
   </main>
 
   <aside class="debug-panel" id="debugPanel" aria-label="Панель генератора уровней">

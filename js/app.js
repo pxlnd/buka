@@ -25,7 +25,6 @@ const LEGACY_SIDE_TO_EDGE = {
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-const statusText = document.getElementById('statusText');
 const levelLabel = document.getElementById('levelLabel');
 const progressSteps = document.getElementById('progressSteps');
 const restartBtn = document.getElementById('restartBtn');
@@ -258,10 +257,6 @@ function parseLevelNumberFromFile(fileName) {
 
 function fileNameForLevel(number) {
   return `level-${number}.json`;
-}
-
-function setStatus(text) {
-  statusText.textContent = text;
 }
 
 function setDebugStatus(text, isError = false) {
@@ -871,9 +866,6 @@ function findNearestObstacleEdge(point, obstacleIndex, maxDistance = 18) {
 
 function updateHeader() {
   levelLabel.textContent = `LEVEL ${currentLevel().number}`;
-  backBtn.disabled = state.levelIndex === 0;
-  backBtn.style.opacity = state.levelIndex === 0 ? '0.45' : '1';
-  backBtn.style.cursor = state.levelIndex === 0 ? 'default' : 'pointer';
 }
 
 function updateProgress() {
@@ -1089,8 +1081,6 @@ function loadStage(levelIndex, stageIndex) {
   updateProgress();
   syncDebugPanel();
   renderDebugLists();
-
-  setStatus(`${stageLabel(state.stageIndex)}: попадите в ворота цвета шара.`);
 }
 
 function restartLevel() {
@@ -1104,10 +1094,8 @@ function nextStageOrLevel() {
   }
 
   if (state.levelIndex < state.levels.length - 1) {
-    setStatus('Уровень пройден! Открываем следующий.');
     setTimeout(() => loadStage(state.levelIndex + 1, 0), 680);
   } else {
-    setStatus('Все уровни пройдены! Возвращаемся к LEVEL 1.');
     setTimeout(() => loadStage(0, 0), 1000);
   }
 }
@@ -1129,7 +1117,6 @@ function onCorrectGate(gate) {
   state.ball.moving = false;
   state.ball.vx = 0;
   state.ball.vy = 0;
-  setStatus(`${stageLabel(state.stageIndex)} пройден.`);
 
   const finishedColor = colorValue(gate.color);
   const puffStart = performance.now();
@@ -1331,26 +1318,13 @@ function drawBall(pulse = 0, pulseColor = '#fff') {
   const radius = state.ball.r + pulse * 9;
   const alpha = 1 - pulse;
 
-  const grad = ctx.createRadialGradient(
-    state.ball.x - radius * 0.33,
-    state.ball.y - radius * 0.42,
-    radius * 0.2,
-    state.ball.x,
-    state.ball.y,
-    radius
-  );
-
-  grad.addColorStop(0, '#fff8d7');
-  grad.addColorStop(0.22, state.ball.color);
-  grad.addColorStop(1, shadeColor(state.ball.color, -18));
-
   ctx.beginPath();
   ctx.arc(state.ball.x, state.ball.y, radius, 0, Math.PI * 2);
-  ctx.fillStyle = grad;
+  ctx.fillStyle = state.ball.color;
   ctx.fill();
 
   ctx.lineWidth = 2;
-  ctx.strokeStyle = `rgba(255, 255, 255, ${0.55 * alpha})`;
+  ctx.strokeStyle = shadeColor(state.ball.color, -38);
   ctx.stroke();
 
   if (pulse > 0) {
@@ -1374,7 +1348,8 @@ function drawAim() {
   const dirX = -pullX / distance;
   const dirY = -pullY / distance;
   const trailLen = 54 + distance * 0.95;
-  const coneWidth = 12 + (distance / maxPull) * 14;
+  const baseWidth = 11 + (distance / maxPull) * 9;
+  const tipWidth = 1.6 + (distance / maxPull) * 2.4;
 
   const tipX = state.ball.x + dirX * trailLen;
   const tipY = state.ball.y + dirY * trailLen;
@@ -1382,10 +1357,10 @@ function drawAim() {
   const ny = dirX;
 
   ctx.beginPath();
-  ctx.moveTo(state.ball.x + nx * 6, state.ball.y + ny * 6);
-  ctx.lineTo(state.ball.x - nx * 6, state.ball.y - ny * 6);
-  ctx.lineTo(tipX - nx * coneWidth, tipY - ny * coneWidth);
-  ctx.lineTo(tipX + nx * coneWidth, tipY + ny * coneWidth);
+  ctx.moveTo(state.ball.x + nx * baseWidth, state.ball.y + ny * baseWidth);
+  ctx.lineTo(state.ball.x - nx * baseWidth, state.ball.y - ny * baseWidth);
+  ctx.lineTo(tipX - nx * tipWidth, tipY - ny * tipWidth);
+  ctx.lineTo(tipX + nx * tipWidth, tipY + ny * tipWidth);
   ctx.closePath();
 
   const glow = ctx.createLinearGradient(state.ball.x, state.ball.y, tipX, tipY);
@@ -1406,17 +1381,12 @@ function drawGate(gate) {
   const segment = gateSegment(gate);
   if (!segment) return;
 
-  const grad = ctx.createLinearGradient(segment.sx, segment.sy, segment.ex, segment.ey);
-  grad.addColorStop(0, '#ffffff');
-  grad.addColorStop(0.2, segment.color);
-  grad.addColorStop(1, segment.color);
-
   ctx.beginPath();
   ctx.moveTo(segment.sx, segment.sy);
   ctx.lineTo(segment.ex, segment.ey);
   ctx.lineCap = 'round';
   ctx.lineWidth = 24;
-  ctx.strokeStyle = grad;
+  ctx.strokeStyle = segment.color;
   ctx.stroke();
 
   ctx.beginPath();
@@ -1436,7 +1406,7 @@ function drawGate(gate) {
   ctx.lineTo(baseX + segment.tx * 7, baseY + segment.ty * 7);
   ctx.lineTo(baseX - segment.tx * 7, baseY - segment.ty * 7);
   ctx.closePath();
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = shadeColor(segment.color, -42);
   ctx.fill();
 }
 
@@ -1444,21 +1414,12 @@ function drawArena() {
   const points = state.worldPolygon.points;
   if (points.length < 3) return;
 
-  const bgGrad = ctx.createLinearGradient(
-    state.arena.x,
-    state.arena.y,
-    state.arena.x,
-    state.arena.y + state.arena.h
-  );
-  bgGrad.addColorStop(0, '#8896f2');
-  bgGrad.addColorStop(1, '#7987ea');
-
   createPolygonPath(points);
-  ctx.fillStyle = bgGrad;
+  ctx.fillStyle = "#8896f2";
   ctx.fill();
 
   ctx.lineWidth = 3;
-  ctx.strokeStyle = 'rgba(188, 214, 255, 0.92)';
+  ctx.strokeStyle = 'rgba(239, 245, 255, 0.92)';
   ctx.stroke();
 
   ctx.save();
@@ -1467,21 +1428,13 @@ function drawArena() {
 
   for (const obstacle of state.worldObstacles) {
     const bounds = obstacle.bounds;
-    const shell = ctx.createLinearGradient(
-      bounds.minX,
-      bounds.minY,
-      bounds.maxX,
-      bounds.maxY
-    );
-    shell.addColorStop(0, '#c8d9ff');
-    shell.addColorStop(1, '#bbceff');
 
     createPolygonPath(obstacle.points);
-    ctx.fillStyle = shell;
+    ctx.fillStyle = "#c8d9ff";
     ctx.fill();
 
     ctx.lineWidth = 2;
-    ctx.strokeStyle = 'rgba(132, 159, 229, 0.9)';
+    ctx.strokeStyle = 'rgba(246, 248, 255, 0.9)';
     ctx.stroke();
   }
 
@@ -2267,8 +2220,7 @@ function bindUi() {
   restartBtn.addEventListener('click', restartLevel);
 
   backBtn.addEventListener('click', () => {
-    if (state.levelIndex === 0) return;
-    loadStage(state.levelIndex - 1, 0);
+    window.location = "uniwebview://close";
   });
 
   canvas.addEventListener('pointerdown', onPointerDown);
@@ -2296,10 +2248,8 @@ function bindUi() {
       state.ball.vx = 0;
       state.ball.vy = 0;
       state.ball.moving = false;
-      setStatus('Режим редактора: стрельба отключена.');
       setDebugStatus('Режим редактора включен.');
     } else {
-      setStatus(`${stageLabel(state.stageIndex)}: попадите в ворота цвета шара.`);
       setDebugStatus('Режим редактора выключен.');
     }
 
@@ -2501,6 +2451,5 @@ async function init() {
 }
 
 init().catch((error) => {
-  setStatus(`Ошибка инициализации: ${error.message}`);
   setDebugStatus(`Ошибка инициализации: ${error.message}`, true);
 });

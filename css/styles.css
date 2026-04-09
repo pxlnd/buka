@@ -31,35 +31,26 @@ body {
 body {
   display: flex;
   justify-content: center;
-  align-items: flex-start;
+  align-items: center;
 }
 
 .game-shell {
   width: min(100vw, 430px);
   min-height: 100vh;
+  height: 100dvh;
   padding: calc(16px + env(safe-area-inset-top)) 16px calc(18px + env(safe-area-inset-bottom));
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  justify-items: center;
+  align-items: start;
   gap: 14px;
 }
 
 .game-header {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 10px;
-}
-
-.header-left {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.header-actions {
-  display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  width: 100%;
 }
 
 .icon-btn,
@@ -92,7 +83,13 @@ body {
 }
 
 .reset-btn {
-  padding: 12px 14px;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  padding: 0;
+  line-height: 1;
 }
 
 .icon-btn:active,
@@ -107,11 +104,13 @@ body {
 }
 
 .level-title {
+  flex: 1;
   margin: 0;
   font-size: clamp(22px, 5vw, 30px);
   letter-spacing: 0.03em;
   color: #0c3e95;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+  text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -119,20 +118,9 @@ body {
 
 .progress-wrap {
   position: relative;
-  width: min(320px, 100%);
-  align-self: center;
+  width: min(240px, 100%);
+  align-self: start;
   padding: 2px 8px;
-}
-
-.progress-line {
-  position: absolute;
-  top: 26px;
-  left: 24px;
-  right: 24px;
-  height: 8px;
-  background: #8c95ef;
-  border-radius: 999px;
-  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.28);
 }
 
 .progress-steps {
@@ -165,9 +153,12 @@ body {
 
 .board-card {
   position: relative;
-  width: min(90vw, 360px);
+  width: min(90vw, 360px, calc((100dvh - 178px) * 0.92));
   aspect-ratio: 0.92;
-  margin: 10px auto 0;
+  margin: 0;
+  align-self: center;
+  justify-self: center;
+  margin-bottom: 50px;
 }
 
 #gameCanvas {
@@ -175,16 +166,6 @@ body {
   height: 100%;
   display: block;
   touch-action: none;
-  filter: drop-shadow(0 14px 16px rgba(16, 45, 122, 0.2));
-}
-
-.status {
-  min-height: 24px;
-  text-align: center;
-  font-size: clamp(15px, 3.8vw, 18px);
-  font-weight: 600;
-  color: #1a3f95;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 
 .debug-panel {
@@ -380,16 +361,59 @@ body {
 }
 
 @media (max-width: 390px) {
-  .reset-btn {
-    font-size: 13px;
-    padding: 11px 12px;
-  }
-
   .board-card {
-    width: min(90vw, 340px);
+    width: min(90vw, 340px, calc((100dvh - 172px) * 0.92));
+    margin: 0px;
   }
 
   .debug-panel {
     width: 100vw;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 560px) {
+  .game-shell {
+    width: min(100vw, 560px);
+    max-width: 560px;
+    min-height: 100vh;
+    height: 100dvh;
+    padding:
+      calc(10px + env(safe-area-inset-top))
+      calc(14px + env(safe-area-inset-right))
+      calc(10px + env(safe-area-inset-bottom))
+      calc(14px + env(safe-area-inset-left));
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr;
+    row-gap: 10px;
+    justify-items: center;
+    align-content: start;
+  }
+
+  .game-header {
+    width: 100%;
+    align-self: start;
+  }
+
+  .progress-wrap {
+    width: min(220px, 100%);
+    align-self: start;
+    padding-inline: 8px;
+  }
+
+  .progress-steps {
+    gap: 8px;
+  }
+
+  .step-dot {
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+  }
+
+  .board-card {
+    width: min(70vw, 300px, calc((100dvh - 126px) * 0.92));
+    align-self: center;
+    justify-self: center;
+    margin: 0px;
   }
 }
