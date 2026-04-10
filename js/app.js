@@ -29,6 +29,8 @@ const levelLabel = document.getElementById('levelLabel');
 const progressSteps = document.getElementById('progressSteps');
 const restartBtn = document.getElementById('restartBtn');
 const backBtn = document.getElementById('backBtn');
+const loseOverlay = document.getElementById('loseOverlay');
+const loseRetryBtn = document.getElementById('loseRetryBtn');
 
 const debugCloseBtn = document.getElementById('debugCloseBtn');
 const debugPanel = document.getElementById('debugPanel');
@@ -61,6 +63,7 @@ const state = {
   levelIndex: 0,
   stageIndex: 0,
   stageLocked: false,
+  shotUsed: false,
   arena: { x: 16, y: 16, w: 328, h: 328 },
   worldPolygon: {
     points: [],
@@ -880,6 +883,16 @@ function updateProgress() {
   }
 }
 
+function hideLoseOverlay() {
+  loseOverlay.classList.remove('is-visible');
+  loseOverlay.hidden = true;
+}
+
+function showLoseOverlay() {
+  loseOverlay.hidden = false;
+  requestAnimationFrame(() => loseOverlay.classList.add('is-visible'));
+}
+
 function syncGateEdgeOptions() {
   const previous = debugGateSide.value;
   debugGateSide.innerHTML = '';
@@ -1067,12 +1080,14 @@ function loadStage(levelIndex, stageIndex) {
 
   ensureCurrentStageShape();
   state.stageLocked = false;
+  state.shotUsed = false;
   state.dragging = false;
   state.pull.x = 0;
   state.pull.y = 0;
   state.editor.dragObstacle = null;
   state.editor.selectedObstacleIndex = -1;
   state.editor.draftObstacle = null;
+  hideLoseOverlay();
 
   rebuildWorldPolygon();
   rebuildWorldObstacles();
@@ -1138,6 +1153,19 @@ function onCorrectGate(gate) {
   requestAnimationFrame(puff);
 }
 
+function onStageFailed() {
+  if (state.stageLocked) return;
+
+  state.stageLocked = true;
+  state.dragging = false;
+  state.pull.x = 0;
+  state.pull.y = 0;
+  state.ball.moving = false;
+  state.ball.vx = 0;
+  state.ball.vy = 0;
+  showLoseOverlay();
+}
+
 function handlePolygonCollisions() {
   const edges = state.worldPolygon.edges;
 
@@ -1159,8 +1187,15 @@ function handlePolygonCollisions() {
       if (signed >= state.ball.r) continue;
 
       const gate = findGateHit(edge.index, closest.t);
-      if (gate && gate.color === state.ball.colorToken) {
-        onCorrectGate(gate);
+      if (gate) {
+        const gateColor = colorValue(gate.color).toLowerCase();
+        const ballColor = colorValue(state.ball.colorToken).toLowerCase();
+
+        if (gateColor === ballColor) {
+          onCorrectGate(gate);
+        } else {
+          onStageFailed();
+        }
         return;
       }
 
@@ -1300,6 +1335,10 @@ function updatePhysics(dt) {
     state.ball.vx = 0;
     state.ball.vy = 0;
     state.ball.moving = false;
+
+    if (state.shotUsed && !state.stageLocked) {
+      onStageFailed();
+    }
   }
 }
 
@@ -2038,7 +2077,7 @@ function onPointerDown(evt) {
     return;
   }
 
-  if (state.stageLocked || state.ball.moving) return;
+  if (state.stageLocked || state.ball.moving || state.shotUsed) return;
 
   const pointer = worldPosFromEvent(evt);
   const distance = Math.hypot(pointer.x - state.ball.x, pointer.y - state.ball.y);
@@ -2094,6 +2133,7 @@ function onPointerUp(evt) {
   state.ball.vx = launchX * speed;
   state.ball.vy = launchY * speed;
   state.ball.moving = true;
+  state.shotUsed = true;
 }
 
 function resizeCanvas() {
@@ -2218,6 +2258,9 @@ function bindUi() {
   fillColorSelect(debugGateColor);
 
   restartBtn.addEventListener('click', restartLevel);
+  loseRetryBtn.addEventListener('click', () => {
+    loadStage(state.levelIndex, state.stageIndex);
+  });
 
   backBtn.addEventListener('click', () => {
     window.location = "uniwebview://close";

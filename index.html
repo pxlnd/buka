@@ -136,6 +136,13 @@
     <p class="debug-status" id="debugStatus">Панель готова.</p>
   </aside>
 
+  <div class="result-overlay" id="loseOverlay" hidden>
+    <div class="result-card" role="alertdialog" aria-modal="true" aria-labelledby="loseTitle">
+      <h2 id="loseTitle">You lost</h2>
+      <button class="save-btn" id="loseRetryBtn" type="button">Retry</button>
+    </div>
+  </div>
+
   <script type="module" src="./js/app.js"></script>
 </body>
 </html>

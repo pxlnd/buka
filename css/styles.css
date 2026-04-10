@@ -360,6 +360,51 @@ body {
   color: #b91f30;
 }
 
+.result-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 34, 90, 0.62);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  z-index: 70;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.result-overlay[hidden] {
+  display: none;
+}
+
+.result-overlay.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.result-card {
+  width: min(100%, 320px);
+  border-radius: 18px;
+  padding: 22px 18px 18px;
+  background: linear-gradient(180deg, #fdf2f2 0%, #ffdede 100%);
+  border: 2px solid rgba(180, 40, 52, 0.25);
+  box-shadow: 0 14px 34px rgba(10, 19, 60, 0.28);
+  text-align: center;
+}
+
+.result-card h2 {
+  margin: 0;
+  font-size: 28px;
+  color: #9f1f2e;
+}
+
+.result-card p {
+  margin: 10px 0 16px;
+  font-size: 15px;
+  line-height: 1.35;
+  color: #7d1d2a;
+}
+
 @media (max-width: 390px) {
   .board-card {
     width: min(90vw, 340px, calc((100dvh - 172px) * 0.92));
