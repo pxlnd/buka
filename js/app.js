@@ -1,4 +1,10 @@
 const STAGES_PER_LEVEL = 5;
+const DEFAULT_COMMON_SETTINGS = Object.freeze({
+  physics: {
+    impulse: 0.2,
+    braking: 0.0035
+  }
+});
 
 const COLOR_TOKENS = {
   yellow: '#f6c531',
@@ -42,6 +48,9 @@ const debugLoadLevelBtn = document.getElementById('debugLoadLevelBtn');
 const debugNewLevelBtn = document.getElementById('debugNewLevelBtn');
 const debugClearStageBtn = document.getElementById('debugClearStageBtn');
 const debugBallColor = document.getElementById('debugBallColor');
+const debugBallImpulse = document.getElementById('debugBallImpulse');
+const debugBallBraking = document.getElementById('debugBallBraking');
+const debugSaveSettingsBtn = document.getElementById('debugSaveSettingsBtn');
 const debugToolRow = document.getElementById('debugToolRow');
 const debugResetPolygonBtn = document.getElementById('debugResetPolygonBtn');
 const debugVertexList = document.getElementById('debugVertexList');
@@ -64,6 +73,12 @@ const state = {
   stageIndex: 0,
   stageLocked: false,
   shotUsed: false,
+  commonSettings: {
+    physics: {
+      impulse: DEFAULT_COMMON_SETTINGS.physics.impulse,
+      braking: DEFAULT_COMMON_SETTINGS.physics.braking
+    }
+  },
   arena: { x: 16, y: 16, w: 328, h: 328 },
   worldPolygon: {
     points: [],
@@ -93,7 +108,8 @@ const state = {
     dragVertexIndex: -1,
     dragObstacle: null,
     selectedObstacleIndex: -1,
-    isSaving: false
+    isSaving: false,
+    isSavingSettings: false
   }
 };
 
@@ -456,6 +472,27 @@ function normalizeStage(stage) {
   };
 }
 
+function normalizeImpulse(value) {
+  const parsed = Number(value);
+  const candidate = Number.isFinite(parsed) ? parsed : DEFAULT_COMMON_SETTINGS.physics.impulse;
+  return round(clamp(candidate, 0.05, 1), 4);
+}
+
+function normalizeBraking(value) {
+  const parsed = Number(value);
+  const candidate = Number.isFinite(parsed) ? parsed : DEFAULT_COMMON_SETTINGS.physics.braking;
+  return round(clamp(candidate, 0.0005, 0.03), 6);
+}
+
+function normalizeCommonSettings(raw) {
+  return {
+    physics: {
+      impulse: normalizeImpulse(raw?.physics?.impulse),
+      braking: normalizeBraking(raw?.physics?.braking)
+    }
+  };
+}
+
 function normalizeLevel(rawLevel, fileName = null) {
   const fileNumber = parseLevelNumberFromFile(fileName || '');
   const number = clamp(Number(rawLevel?.number) || fileNumber || 1, 1, 9999);
@@ -504,6 +541,15 @@ function serializeLevel(level) {
   return {
     number: level.number,
     stages: level.stages.map(serializeStage)
+  };
+}
+
+function serializeCommonSettings(settings) {
+  return {
+    physics: {
+      impulse: normalizeImpulse(settings?.physics?.impulse),
+      braking: normalizeBraking(settings?.physics?.braking)
+    }
   };
 }
 
@@ -560,6 +606,35 @@ async function saveLevelToServer(level) {
   const payload = serializeLevel({ ...level, number });
 
   const response = await fetch(`/api/levels/${fileName}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+async function loadCommonSettings() {
+  try {
+    const raw = await fetchJson('/api/settings/common');
+    return normalizeCommonSettings(raw);
+  } catch (error) {
+    setDebugStatus(`Не удалось загрузить общие настройки: ${error.message}. Использую дефолт.`, true);
+    return normalizeCommonSettings(DEFAULT_COMMON_SETTINGS);
+  }
+}
+
+async function saveCommonSettingsToServer(settings) {
+  const payload = serializeCommonSettings(settings);
+
+  const response = await fetch('/api/settings/common', {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json'
@@ -883,6 +958,29 @@ function updateProgress() {
   }
 }
 
+function formatDecimal(value, digits = 4) {
+  return Number(value).toFixed(digits).replace(/\.?0+$/, '');
+}
+
+function syncPhysicsInputs() {
+  debugBallImpulse.value = formatDecimal(state.commonSettings.physics.impulse, 4);
+  debugBallBraking.value = formatDecimal(state.commonSettings.physics.braking, 6);
+}
+
+function setCommonSettings(nextSettings) {
+  state.commonSettings = normalizeCommonSettings(nextSettings);
+  syncPhysicsInputs();
+}
+
+function updateCommonSettingsFromInputs() {
+  setCommonSettings({
+    physics: {
+      impulse: debugBallImpulse.value,
+      braking: debugBallBraking.value
+    }
+  });
+}
+
 function hideLoseOverlay() {
   loseOverlay.classList.remove('is-visible');
   loseOverlay.hidden = true;
@@ -1059,6 +1157,7 @@ function syncDebugPanel() {
 
   debugLevelNumber.value = String(level.number);
   debugBallColor.value = stage.ballColor;
+  syncPhysicsInputs();
 
   if (!Object.keys(COLOR_TOKENS).includes(debugGateColor.value)) {
     debugGateColor.value = stage.ballColor;
@@ -1327,7 +1426,8 @@ function updatePhysics(dt) {
     if (state.stageLocked) return;
   }
 
-  const friction = Math.pow(0.9965, dt);
+  const frictionBase = 1 - state.commonSettings.physics.braking;
+  const friction = Math.pow(frictionBase, dt);
   state.ball.vx *= friction;
   state.ball.vy *= friction;
 
@@ -2129,7 +2229,7 @@ function onPointerUp(evt) {
 
   if (force < 7) return;
 
-  const speed = 0.2;
+  const speed = state.commonSettings.physics.impulse;
   state.ball.vx = launchX * speed;
   state.ball.vy = launchY * speed;
   state.ball.moving = true;
@@ -2253,6 +2353,27 @@ async function saveCurrentLevel() {
   }
 }
 
+async function saveCommonSettings() {
+  if (state.editor.isSavingSettings) return;
+
+  try {
+    state.editor.isSavingSettings = true;
+    debugSaveSettingsBtn.disabled = true;
+
+    updateCommonSettingsFromInputs();
+    const response = await saveCommonSettingsToServer(state.commonSettings);
+    setCommonSettings(response.settings || state.commonSettings);
+
+    const savedPath = response.path || 'data/settings/game-settings.json';
+    setDebugStatus(`Общие настройки сохранены: ${savedPath}`);
+  } catch (error) {
+    setDebugStatus(`Ошибка сохранения общих настроек: ${error.message}`, true);
+  } finally {
+    state.editor.isSavingSettings = false;
+    debugSaveSettingsBtn.disabled = false;
+  }
+}
+
 function bindUi() {
   fillColorSelect(debugBallColor);
   fillColorSelect(debugGateColor);
@@ -2355,6 +2476,16 @@ function bindUi() {
     state.ball.colorToken = stage.ballColor;
     state.ball.color = colorValue(stage.ballColor);
     renderDebugLists();
+  });
+
+  debugBallImpulse.addEventListener('change', () => {
+    updateCommonSettingsFromInputs();
+    setDebugStatus('Импульс обновлен. Нажмите "Сохранить настройки", чтобы записать в JSON.');
+  });
+
+  debugBallBraking.addEventListener('change', () => {
+    updateCommonSettingsFromInputs();
+    setDebugStatus('Торможение обновлено. Нажмите "Сохранить настройки", чтобы записать в JSON.');
   });
 
   debugResetPolygonBtn.addEventListener('click', () => {
@@ -2478,10 +2609,12 @@ function bindUi() {
   });
 
   debugSaveBtn.addEventListener('click', saveCurrentLevel);
+  debugSaveSettingsBtn.addEventListener('click', saveCommonSettings);
 }
 
 async function init() {
   bindUi();
+  setCommonSettings(await loadCommonSettings());
 
   state.levels = await loadLevelsFromJson();
   if (!state.levels.length) {
