@@ -53,8 +53,6 @@ body {
   width: 100%;
 }
 
-.icon-btn,
-.reset-btn,
 .small-btn,
 .save-btn,
 .tool-btn,
@@ -72,24 +70,21 @@ body {
   transition: transform 0.08s ease;
 }
 
-.icon-btn {
+.image-btn {
   width: 44px;
   height: 44px;
-  display: grid;
-  place-items: center;
-  font-size: 23px;
-  padding-right: 2px;
-  flex: 0 0 auto;
+  background: transparent;
+  border: 0px;
+  padding: 0px;
 }
 
-.reset-btn {
+.image-btn img {
   width: 44px;
   height: 44px;
-  display: grid;
-  place-items: center;
-  font-size: 24px;
-  padding: 0;
-  line-height: 1;
+  display: block;
+  pointer-events: none;
+  padding: 0px;
+  margin: 0px;
 }
 
 .icon-btn:active,
