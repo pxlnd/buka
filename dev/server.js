@@ -8,6 +8,14 @@ const port = 3000;
 const LEVEL_FILE_RE = /^level-\d+\.json$/;
 const LEVELS_DIR = path.join(__dirname, 'data', 'levels');
 const MANIFEST_PATH = path.join(LEVELS_DIR, 'manifest.json');
+const SETTINGS_DIR = path.join(__dirname, 'data', 'settings');
+const COMMON_SETTINGS_PATH = path.join(SETTINGS_DIR, 'game-settings.json');
+const DEFAULT_COMMON_SETTINGS = Object.freeze({
+  physics: {
+    impulse: 0.2,
+    braking: 0.0035
+  }
+});
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(__dirname));
@@ -26,6 +34,10 @@ function ensureValidLevelFileName(fileName) {
 
 async function ensureLevelsDir() {
   await fs.mkdir(LEVELS_DIR, { recursive: true });
+}
+
+async function ensureSettingsDir() {
+  await fs.mkdir(SETTINGS_DIR, { recursive: true });
 }
 
 async function readJson(filePath) {
@@ -90,6 +102,99 @@ function validateLevelPayload(body) {
 
   return null;
 }
+
+function normalizeImpulse(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_COMMON_SETTINGS.physics.impulse;
+  return Math.max(0.05, Math.min(1, parsed));
+}
+
+function normalizeBraking(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_COMMON_SETTINGS.physics.braking;
+  return Math.max(0.0005, Math.min(0.03, parsed));
+}
+
+function normalizeCommonSettings(body) {
+  return {
+    physics: {
+      impulse: Number(normalizeImpulse(body?.physics?.impulse).toFixed(4)),
+      braking: Number(normalizeBraking(body?.physics?.braking).toFixed(6))
+    }
+  };
+}
+
+function validateCommonSettingsPayload(body) {
+  if (!body || typeof body !== 'object') {
+    return 'Body должен быть JSON-объектом.';
+  }
+
+  if (!body.physics || typeof body.physics !== 'object') {
+    return 'Поле physics должно быть объектом.';
+  }
+
+  const impulse = Number(body.physics.impulse);
+  if (!Number.isFinite(impulse) || impulse < 0.05 || impulse > 1) {
+    return 'physics.impulse должен быть числом в диапазоне 0.05..1.';
+  }
+
+  const braking = Number(body.physics.braking);
+  if (!Number.isFinite(braking) || braking < 0.0005 || braking > 0.03) {
+    return 'physics.braking должен быть числом в диапазоне 0.0005..0.03.';
+  }
+
+  return null;
+}
+
+async function readOrCreateCommonSettings() {
+  await ensureSettingsDir();
+
+  try {
+    const parsed = await readJson(COMMON_SETTINGS_PATH);
+    const normalized = normalizeCommonSettings(parsed);
+    return normalized;
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      throw error;
+    }
+
+    const defaults = normalizeCommonSettings(DEFAULT_COMMON_SETTINGS);
+    await fs.writeFile(COMMON_SETTINGS_PATH, `${JSON.stringify(defaults, null, 2)}\n`, 'utf8');
+    return defaults;
+  }
+}
+
+app.get('/api/settings/common', async (_req, res) => {
+  try {
+    const settings = await readOrCreateCommonSettings();
+    res.json(settings);
+  } catch (error) {
+    res.status(500).send(`Не удалось прочитать общие настройки: ${error.message}`);
+  }
+});
+
+app.put('/api/settings/common', async (req, res) => {
+  const payloadError = validateCommonSettingsPayload(req.body);
+  if (payloadError) {
+    res.status(400).send(payloadError);
+    return;
+  }
+
+  const settings = normalizeCommonSettings(req.body);
+
+  try {
+    await ensureSettingsDir();
+    await fs.writeFile(COMMON_SETTINGS_PATH, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+
+    res.json({
+      ok: true,
+      settings,
+      path: path.relative(__dirname, COMMON_SETTINGS_PATH)
+    });
+  } catch (error) {
+    res.status(500).send(`Не удалось сохранить общие настройки: ${error.message}`);
+  }
+});
 
 app.get('/api/levels', async (_req, res) => {
   try {
