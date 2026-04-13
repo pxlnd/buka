@@ -26,7 +26,16 @@ const COLOR_TOKENS = {
   green: '#1fd95b',
   blue: '#2aa4ff',
   pink: '#ff5ca0',
-  orange: '#ff9f1a'
+  purple: '#B633FD'
+};
+
+const BALL_OUTLINE_TOKENS = {
+  yellow: '#F9FF90',
+  red: '#AA000A',
+  green: '#168B03',
+  blue: '#cbe8ff',
+  pink: '#BB0E9D',
+  purple: '#7305BB'
 };
 
 const DEFAULT_POLYGON = [
@@ -184,6 +193,12 @@ function isValidColorToken(token) {
 function colorValue(token) {
   if (typeof token !== 'string') return COLOR_TOKENS.yellow;
   return COLOR_TOKENS[token] || token;
+}
+
+function ballOutlineValue(token) {
+  if (typeof token !== 'string') return BALL_OUTLINE_TOKENS.yellow;
+  if (token in BALL_OUTLINE_TOKENS) return BALL_OUTLINE_TOKENS[token];
+  return shadeColor(colorValue(token), 72);
 }
 
 function createPolygonPath(points) {
@@ -1559,26 +1574,55 @@ function shadeColor(hex, amount) {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-function drawBall(pulse = 0, pulseColor = '#fff') {
-  const radius = state.ball.r + pulse * 9;
+function drawReferenceBall(pulse = 0, pulseColor = '#fff') {
+  const radius = state.ball.r + pulse * 7;
   const alpha = 1 - pulse;
+  const cx = state.ball.x;
+  const cy = state.ball.y;
+  const color = state.ball.color;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + radius * 0.5, radius * 1.04, radius * 0.9, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(34, 63, 182, 0.45)';
+  ctx.fill();
+  ctx.restore();
 
   ctx.beginPath();
-  ctx.arc(state.ball.x, state.ball.y, radius, 0, Math.PI * 2);
-  ctx.fillStyle = state.ball.color;
+  ctx.arc(cx, cy + radius * 0.16, radius * 1.07, 0, Math.PI * 2);
+  ctx.fillStyle = shadeColor(color, -55);
   ctx.fill();
 
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = shadeColor(state.ball.color, -38);
+  const bodyGrad = ctx.createLinearGradient(cx, cy - radius, cx, cy + radius);
+  bodyGrad.addColorStop(0, shadeColor(color, 44));
+  bodyGrad.addColorStop(0.62, shadeColor(color, 10));
+  bodyGrad.addColorStop(1, shadeColor(color, -18));
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = ballOutlineValue(state.ball.colorToken);
   ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(cx - radius * 0.28, cy - radius * 0.68, radius * 0.35, radius * 0.16, -0.45, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.88)';
+  ctx.fill();
 
   if (pulse > 0) {
     ctx.beginPath();
-    ctx.arc(state.ball.x, state.ball.y, state.ball.r + pulse * 20, 0, Math.PI * 2);
+    ctx.arc(cx, cy, state.ball.r + pulse * 20, 0, Math.PI * 2);
     ctx.strokeStyle = `${pulseColor}${Math.round(alpha * 210).toString(16).padStart(2, '0')}`;
     ctx.lineWidth = 4;
     ctx.stroke();
   }
+}
+
+function drawBall(pulse = 0, pulseColor = '#fff') {
+  drawReferenceBall(pulse, pulseColor);
 }
 
 function drawAim() {
@@ -1622,7 +1666,7 @@ function drawAim() {
   ctx.stroke();
 }
 
-function drawGate(gate) {
+function drawDefaultGate(gate) {
   const segment = gateSegment(gate);
   if (!segment) return;
 
@@ -1655,10 +1699,11 @@ function drawGate(gate) {
   ctx.fill();
 }
 
-function drawArena() {
-  const points = state.worldPolygon.points;
-  if (points.length < 3) return;
+function drawGate(gate) {
+  drawDefaultGate(gate);
+}
 
+function drawDefaultArena(points) {
   createPolygonPath(points);
   ctx.fillStyle = state.levelVisuals.field;
   ctx.fill();
@@ -1672,10 +1717,8 @@ function drawArena() {
   ctx.clip();
 
   for (const obstacle of state.worldObstacles) {
-    const bounds = obstacle.bounds;
-
     createPolygonPath(obstacle.points);
-    ctx.fillStyle = "#c8d9ff";
+    ctx.fillStyle = '#c8d9ff';
     ctx.fill();
 
     ctx.lineWidth = 2;
@@ -1684,6 +1727,13 @@ function drawArena() {
   }
 
   ctx.restore();
+}
+
+function drawArena() {
+  const points = state.worldPolygon.points;
+  if (points.length < 3) return;
+
+  drawDefaultArena(points);
 }
 
 function drawEditorOverlay() {
