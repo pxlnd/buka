@@ -10,10 +10,25 @@ const LEVELS_DIR = path.join(__dirname, 'data', 'levels');
 const MANIFEST_PATH = path.join(LEVELS_DIR, 'manifest.json');
 const SETTINGS_DIR = path.join(__dirname, 'data', 'settings');
 const COMMON_SETTINGS_PATH = path.join(SETTINGS_DIR, 'game-settings.json');
+const DEFAULT_LEVEL_VISUALS = Object.freeze({
+  background: '#DCE7FF',
+  field: '#8692FF'
+});
+const LEVEL_VISUAL_DEFAULTS = Object.freeze({
+  1: Object.freeze({
+    background: '#DCE7FF',
+    field: '#8692FF'
+  }),
+  2: Object.freeze({
+    background: '#BC9AFB',
+    field: '#FFFFFF'
+  })
+});
 const DEFAULT_COMMON_SETTINGS = Object.freeze({
   physics: {
     impulse: 0.2,
-    braking: 0.0035
+    braking: 0.0035,
+    ballRadiusRatio: 0.0444
   }
 });
 
@@ -100,6 +115,14 @@ function validateLevelPayload(body) {
     return 'Поле stages должно быть массивом.';
   }
 
+  if (body.background !== undefined && !isHexColor(body.background)) {
+    return 'Поле background должно быть в формате #RRGGBB.';
+  }
+
+  if (body.field !== undefined && !isHexColor(body.field)) {
+    return 'Поле field должно быть в формате #RRGGBB.';
+  }
+
   return null;
 }
 
@@ -115,11 +138,44 @@ function normalizeBraking(value) {
   return Math.max(0.0005, Math.min(0.03, parsed));
 }
 
+function normalizeBallRadiusRatio(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_COMMON_SETTINGS.physics.ballRadiusRatio;
+  return Math.max(0.01, Math.min(0.2, parsed));
+}
+
+function isHexColor(value) {
+  return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value.trim());
+}
+
+function normalizeHexColor(value, fallback) {
+  if (!isHexColor(value)) return fallback;
+  return value.trim().toUpperCase();
+}
+
+function defaultLevelVisualsForNumber(levelNumber) {
+  const key = Math.max(1, Math.min(9999, Number(levelNumber) || 1));
+  const preset = LEVEL_VISUAL_DEFAULTS[key];
+  return {
+    background: normalizeHexColor(preset?.background, DEFAULT_LEVEL_VISUALS.background),
+    field: normalizeHexColor(preset?.field, DEFAULT_LEVEL_VISUALS.field)
+  };
+}
+
+function normalizeLevelVisuals(visuals, levelNumber) {
+  const fallback = defaultLevelVisualsForNumber(levelNumber);
+  return {
+    background: normalizeHexColor(visuals?.background, fallback.background),
+    field: normalizeHexColor(visuals?.field, fallback.field)
+  };
+}
+
 function normalizeCommonSettings(body) {
   return {
     physics: {
       impulse: Number(normalizeImpulse(body?.physics?.impulse).toFixed(4)),
-      braking: Number(normalizeBraking(body?.physics?.braking).toFixed(6))
+      braking: Number(normalizeBraking(body?.physics?.braking).toFixed(6)),
+      ballRadiusRatio: Number(normalizeBallRadiusRatio(body?.physics?.ballRadiusRatio).toFixed(4))
     }
   };
 }
@@ -141,6 +197,11 @@ function validateCommonSettingsPayload(body) {
   const braking = Number(body.physics.braking);
   if (!Number.isFinite(braking) || braking < 0.0005 || braking > 0.03) {
     return 'physics.braking должен быть числом в диапазоне 0.0005..0.03.';
+  }
+
+  const ballRadiusRatio = Number(body.physics.ballRadiusRatio);
+  if (!Number.isFinite(ballRadiusRatio) || ballRadiusRatio < 0.01 || ballRadiusRatio > 0.2) {
+    return 'physics.ballRadiusRatio должен быть числом в диапазоне 0.01..0.2.';
   }
 
   return null;
@@ -261,8 +322,13 @@ app.put('/api/levels/:fileName', async (req, res) => {
     return;
   }
 
+  const levelNumber = Number(req.body.number);
+  const visuals = normalizeLevelVisuals(req.body, levelNumber);
+
   const safeData = {
-    number: Number(req.body.number),
+    number: levelNumber,
+    background: visuals.background,
+    field: visuals.field,
     stages: req.body.stages
   };
 

@@ -1,8 +1,23 @@
 const STAGES_PER_LEVEL = 5;
+const DEFAULT_LEVEL_VISUALS = Object.freeze({
+  background: '#DCE7FF',
+  field: '#8692FF'
+});
+const LEVEL_VISUAL_DEFAULTS = Object.freeze({
+  1: Object.freeze({
+    background: '#DCE7FF',
+    field: '#8692FF'
+  }),
+  2: Object.freeze({
+    background: '#BC9AFB',
+    field: '#FFFFFF'
+  })
+});
 const DEFAULT_COMMON_SETTINGS = Object.freeze({
   physics: {
     impulse: 0.2,
-    braking: 0.0035
+    braking: 0.0035,
+    ballRadiusRatio: 0.0444
   }
 });
 
@@ -12,7 +27,16 @@ const COLOR_TOKENS = {
   green: '#1fd95b',
   blue: '#2aa4ff',
   pink: '#ff5ca0',
-  orange: '#ff9f1a'
+  purple: '#B633FD'
+};
+
+const BALL_OUTLINE_TOKENS = {
+  yellow: '#F9FF90',
+  red: '#AA000A',
+  green: '#168B03',
+  blue: '#cbe8ff',
+  pink: '#BB0E9D',
+  purple: '#7305BB'
 };
 
 const DEFAULT_POLYGON = [
@@ -50,6 +74,9 @@ const debugClearStageBtn = document.getElementById('debugClearStageBtn');
 const debugBallColor = document.getElementById('debugBallColor');
 const debugBallImpulse = document.getElementById('debugBallImpulse');
 const debugBallBraking = document.getElementById('debugBallBraking');
+const debugBallRadiusRatio = document.getElementById('debugBallRadiusRatio');
+const debugBackgroundColor = document.getElementById('debugBackgroundColor');
+const debugFieldColor = document.getElementById('debugFieldColor');
 const debugSaveSettingsBtn = document.getElementById('debugSaveSettingsBtn');
 const debugToolRow = document.getElementById('debugToolRow');
 const debugResetPolygonBtn = document.getElementById('debugResetPolygonBtn');
@@ -78,6 +105,10 @@ const state = {
       impulse: DEFAULT_COMMON_SETTINGS.physics.impulse,
       braking: DEFAULT_COMMON_SETTINGS.physics.braking
     }
+  },
+  levelVisuals: {
+    background: DEFAULT_LEVEL_VISUALS.background,
+    field: DEFAULT_LEVEL_VISUALS.field
   },
   arena: { x: 16, y: 16, w: 328, h: 328 },
   worldPolygon: {
@@ -130,6 +161,33 @@ function defaultPolygon() {
   return clonePoints(DEFAULT_POLYGON);
 }
 
+function isHexColor(value) {
+  return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value.trim());
+}
+
+function normalizeHexColor(value, fallback) {
+  if (!isHexColor(value)) return fallback;
+  return value.trim().toUpperCase();
+}
+
+function normalizeLevelVisualSettings(rawVisuals, fallback = DEFAULT_LEVEL_VISUALS) {
+  const safeFallback = {
+    background: normalizeHexColor(fallback?.background, DEFAULT_LEVEL_VISUALS.background),
+    field: normalizeHexColor(fallback?.field, DEFAULT_LEVEL_VISUALS.field)
+  };
+
+  return {
+    background: normalizeHexColor(rawVisuals?.background, safeFallback.background),
+    field: normalizeHexColor(rawVisuals?.field, safeFallback.field)
+  };
+}
+
+function defaultLevelVisualsForNumber(levelNumber) {
+  const key = clamp(Number(levelNumber) || 1, 1, 9999);
+  const preset = LEVEL_VISUAL_DEFAULTS[key];
+  return normalizeLevelVisualSettings(preset, DEFAULT_LEVEL_VISUALS);
+}
+
 function isValidColorToken(token) {
   return typeof token === 'string' && (token in COLOR_TOKENS || /^#[0-9a-fA-F]{6}$/.test(token));
 }
@@ -137,6 +195,12 @@ function isValidColorToken(token) {
 function colorValue(token) {
   if (typeof token !== 'string') return COLOR_TOKENS.yellow;
   return COLOR_TOKENS[token] || token;
+}
+
+function ballOutlineValue(token) {
+  if (typeof token !== 'string') return BALL_OUTLINE_TOKENS.yellow;
+  if (token in BALL_OUTLINE_TOKENS) return BALL_OUTLINE_TOKENS[token];
+  return shadeColor(colorValue(token), 72);
 }
 
 function createPolygonPath(points) {
@@ -294,9 +358,12 @@ function makeBlankStage() {
 }
 
 function makeBlankLevel(number) {
+  const visuals = defaultLevelVisualsForNumber(number);
   return {
     number,
     fileName: fileNameForLevel(number),
+    background: visuals.background,
+    field: visuals.field,
     stages: Array.from({ length: STAGES_PER_LEVEL }, () => makeBlankStage())
   };
 }
@@ -484,11 +551,18 @@ function normalizeBraking(value) {
   return round(clamp(candidate, 0.0005, 0.03), 6);
 }
 
+function normalizeBallRadiusRatio(value) {
+  const parsed = Number(value);
+  const candidate = Number.isFinite(parsed) ? parsed : DEFAULT_COMMON_SETTINGS.physics.ballRadiusRatio;
+  return round(clamp(candidate, 0.01, 0.2), 4);
+}
+
 function normalizeCommonSettings(raw) {
   return {
     physics: {
       impulse: normalizeImpulse(raw?.physics?.impulse),
-      braking: normalizeBraking(raw?.physics?.braking)
+      braking: normalizeBraking(raw?.physics?.braking),
+      ballRadiusRatio: normalizeBallRadiusRatio(raw?.physics?.ballRadiusRatio)
     }
   };
 }
@@ -496,6 +570,10 @@ function normalizeCommonSettings(raw) {
 function normalizeLevel(rawLevel, fileName = null) {
   const fileNumber = parseLevelNumberFromFile(fileName || '');
   const number = clamp(Number(rawLevel?.number) || fileNumber || 1, 1, 9999);
+  const visuals = normalizeLevelVisualSettings({
+    background: rawLevel?.background ?? rawLevel?.visuals?.background,
+    field: rawLevel?.field ?? rawLevel?.visuals?.field
+  }, defaultLevelVisualsForNumber(number));
 
   const sourceStages = Array.isArray(rawLevel?.stages) ? rawLevel.stages : [];
   const stages = [];
@@ -507,6 +585,8 @@ function normalizeLevel(rawLevel, fileName = null) {
   return {
     number,
     fileName: fileName || fileNameForLevel(number),
+    background: visuals.background,
+    field: visuals.field,
     stages
   };
 }
@@ -538,8 +618,12 @@ function serializeStage(stage) {
 }
 
 function serializeLevel(level) {
+  const visuals = normalizeLevelVisualSettings(level, defaultLevelVisualsForNumber(level.number));
+
   return {
     number: level.number,
+    background: visuals.background,
+    field: visuals.field,
     stages: level.stages.map(serializeStage)
   };
 }
@@ -548,7 +632,8 @@ function serializeCommonSettings(settings) {
   return {
     physics: {
       impulse: normalizeImpulse(settings?.physics?.impulse),
-      braking: normalizeBraking(settings?.physics?.braking)
+      braking: normalizeBraking(settings?.physics?.braking),
+      ballRadiusRatio: normalizeBallRadiusRatio(settings?.physics?.ballRadiusRatio)
     }
   };
 }
@@ -656,6 +741,18 @@ function currentLevel() {
 
 function currentStage() {
   return currentLevel().stages[state.stageIndex];
+}
+
+function currentLevelVisualSettings(level = null) {
+  const target = level || (state.levels.length ? currentLevel() : null);
+  const number = clamp(Number(target?.number) || 1, 1, 9999);
+  return normalizeLevelVisualSettings(target, defaultLevelVisualsForNumber(number));
+}
+
+function applyLevelVisualSettings(level = null) {
+  const visuals = currentLevelVisualSettings(level);
+  state.levelVisuals = visuals;
+  document.documentElement.style.setProperty('--level-bg', visuals.background);
 }
 
 function ensureCurrentStageShape() {
@@ -827,9 +924,18 @@ function rebuildWorldObstacles() {
   state.worldObstacles = worldObstacles;
 }
 
+function updateBallRadiusFromCanvas() {
+  const width = Number(state.canvasRect?.width);
+  if (!Number.isFinite(width) || width <= 0) return;
+
+  const ratio = normalizeBallRadiusRatio(state.commonSettings?.physics?.ballRadiusRatio);
+  state.ball.r = clamp(width * ratio, 6, width * 0.25);
+}
+
 function syncBallWithStage() {
   const stage = currentStage();
   stage.start = normalizeStart(stage.start, stage.polygon);
+  updateBallRadiusFromCanvas();
 
   state.ball.x = state.arena.x + stage.start.x * state.arena.w;
   state.ball.y = state.arena.y + stage.start.y * state.arena.h;
@@ -965,20 +1071,53 @@ function formatDecimal(value, digits = 4) {
 function syncPhysicsInputs() {
   debugBallImpulse.value = formatDecimal(state.commonSettings.physics.impulse, 4);
   debugBallBraking.value = formatDecimal(state.commonSettings.physics.braking, 6);
+  debugBallRadiusRatio.value = formatDecimal(state.commonSettings.physics.ballRadiusRatio, 4);
 }
 
 function setCommonSettings(nextSettings) {
   state.commonSettings = normalizeCommonSettings(nextSettings);
   syncPhysicsInputs();
+  updateBallRadiusFromCanvas();
+}
+
+function updatePhysicsSettingsFromInputs() {
+  setCommonSettings({
+    ...state.commonSettings,
+    physics: {
+      impulse: debugBallImpulse.value,
+      braking: debugBallBraking.value,
+      ballRadiusRatio: debugBallRadiusRatio.value
+    }
+  });
+}
+
+function updateCurrentLevelColorsFromInputs() {
+  if (!state.levels.length) return true;
+
+  const level = currentLevel();
+  const currentVisuals = currentLevelVisualSettings(level);
+  const rawBackground = String(debugBackgroundColor.value || '').trim();
+  const rawField = String(debugFieldColor.value || '').trim();
+
+  if (!isHexColor(rawBackground) || !isHexColor(rawField)) {
+    debugBackgroundColor.value = currentVisuals.background;
+    debugFieldColor.value = currentVisuals.field;
+    setDebugStatus('Цвета должны быть в формате #RRGGBB.', true);
+    return false;
+  }
+
+  level.background = normalizeHexColor(rawBackground, currentVisuals.background);
+  level.field = normalizeHexColor(rawField, currentVisuals.field);
+  applyLevelVisualSettings(level);
+
+  debugBackgroundColor.value = level.background;
+  debugFieldColor.value = level.field;
+  return true;
 }
 
 function updateCommonSettingsFromInputs() {
-  setCommonSettings({
-    physics: {
-      impulse: debugBallImpulse.value,
-      braking: debugBallBraking.value
-    }
-  });
+  updatePhysicsSettingsFromInputs();
+  return true;
 }
 
 function hideLoseOverlay() {
@@ -1158,6 +1297,9 @@ function syncDebugPanel() {
   debugLevelNumber.value = String(level.number);
   debugBallColor.value = stage.ballColor;
   syncPhysicsInputs();
+  const visuals = currentLevelVisualSettings(level);
+  debugBackgroundColor.value = visuals.background;
+  debugFieldColor.value = visuals.field;
 
   if (!Object.keys(COLOR_TOKENS).includes(debugGateColor.value)) {
     debugGateColor.value = stage.ballColor;
@@ -1191,6 +1333,7 @@ function loadStage(levelIndex, stageIndex) {
   rebuildWorldPolygon();
   rebuildWorldObstacles();
   syncBallWithStage();
+  applyLevelVisualSettings(currentLevel());
   updateHeader();
   updateProgress();
   syncDebugPanel();
@@ -1453,26 +1596,55 @@ function shadeColor(hex, amount) {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-function drawBall(pulse = 0, pulseColor = '#fff') {
-  const radius = state.ball.r + pulse * 9;
+function drawReferenceBall(pulse = 0, pulseColor = '#fff') {
+  const radius = state.ball.r + pulse * 7;
   const alpha = 1 - pulse;
+  const cx = state.ball.x;
+  const cy = state.ball.y;
+  const color = state.ball.color;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + radius * 0.5, radius * 1.04, radius * 0.9, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(34, 63, 182, 0.45)';
+  ctx.fill();
+  ctx.restore();
 
   ctx.beginPath();
-  ctx.arc(state.ball.x, state.ball.y, radius, 0, Math.PI * 2);
-  ctx.fillStyle = state.ball.color;
+  ctx.arc(cx, cy + radius * 0.16, radius * 1.07, 0, Math.PI * 2);
+  ctx.fillStyle = shadeColor(color, -55);
   ctx.fill();
 
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = shadeColor(state.ball.color, -38);
+  const bodyGrad = ctx.createLinearGradient(cx, cy - radius, cx, cy + radius);
+  bodyGrad.addColorStop(0, shadeColor(color, 44));
+  bodyGrad.addColorStop(0.62, shadeColor(color, 10));
+  bodyGrad.addColorStop(1, shadeColor(color, -18));
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = ballOutlineValue(state.ball.colorToken);
   ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(cx - radius * 0.28, cy - radius * 0.68, radius * 0.35, radius * 0.16, -0.45, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.88)';
+  ctx.fill();
 
   if (pulse > 0) {
     ctx.beginPath();
-    ctx.arc(state.ball.x, state.ball.y, state.ball.r + pulse * 20, 0, Math.PI * 2);
+    ctx.arc(cx, cy, state.ball.r + pulse * 20, 0, Math.PI * 2);
     ctx.strokeStyle = `${pulseColor}${Math.round(alpha * 210).toString(16).padStart(2, '0')}`;
     ctx.lineWidth = 4;
     ctx.stroke();
   }
+}
+
+function drawBall(pulse = 0, pulseColor = '#fff') {
+  drawReferenceBall(pulse, pulseColor);
 }
 
 function drawAim() {
@@ -1516,7 +1688,7 @@ function drawAim() {
   ctx.stroke();
 }
 
-function drawGate(gate) {
+function drawDefaultGate(gate) {
   const segment = gateSegment(gate);
   if (!segment) return;
 
@@ -1549,12 +1721,13 @@ function drawGate(gate) {
   ctx.fill();
 }
 
-function drawArena() {
-  const points = state.worldPolygon.points;
-  if (points.length < 3) return;
+function drawGate(gate) {
+  drawDefaultGate(gate);
+}
 
+function drawDefaultArena(points) {
   createPolygonPath(points);
-  ctx.fillStyle = "#8896f2";
+  ctx.fillStyle = state.levelVisuals.field;
   ctx.fill();
 
   ctx.lineWidth = 3;
@@ -1566,10 +1739,8 @@ function drawArena() {
   ctx.clip();
 
   for (const obstacle of state.worldObstacles) {
-    const bounds = obstacle.bounds;
-
     createPolygonPath(obstacle.points);
-    ctx.fillStyle = "#c8d9ff";
+    ctx.fillStyle = '#c8d9ff';
     ctx.fill();
 
     ctx.lineWidth = 2;
@@ -1578,6 +1749,13 @@ function drawArena() {
   }
 
   ctx.restore();
+}
+
+function drawArena() {
+  const points = state.worldPolygon.points;
+  if (points.length < 3) return;
+
+  drawDefaultArena(points);
 }
 
 function drawEditorOverlay() {
@@ -2247,6 +2425,7 @@ function resizeCanvas() {
   state.arena.y = pad;
   state.arena.w = state.canvasRect.width - pad * 2;
   state.arena.h = state.canvasRect.height - pad * 2;
+  updateBallRadiusFromCanvas();
 
   if (state.levels.length) {
     rebuildWorldPolygon();
@@ -2330,6 +2509,7 @@ async function saveCurrentLevel() {
   try {
     state.editor.isSaving = true;
     debugSaveBtn.disabled = true;
+    if (!updateCurrentLevelColorsFromInputs()) return;
 
     const level = currentLevel();
     const requestedNumber = clamp(Number(debugLevelNumber.value) || level.number, 1, 9999);
@@ -2360,7 +2540,7 @@ async function saveCommonSettings() {
     state.editor.isSavingSettings = true;
     debugSaveSettingsBtn.disabled = true;
 
-    updateCommonSettingsFromInputs();
+    if (!updateCommonSettingsFromInputs()) return;
     const response = await saveCommonSettingsToServer(state.commonSettings);
     setCommonSettings(response.settings || state.commonSettings);
 
@@ -2479,13 +2659,28 @@ function bindUi() {
   });
 
   debugBallImpulse.addEventListener('change', () => {
-    updateCommonSettingsFromInputs();
+    updatePhysicsSettingsFromInputs();
     setDebugStatus('Импульс обновлен. Нажмите "Сохранить настройки", чтобы записать в JSON.');
   });
 
   debugBallBraking.addEventListener('change', () => {
-    updateCommonSettingsFromInputs();
+    updatePhysicsSettingsFromInputs();
     setDebugStatus('Торможение обновлено. Нажмите "Сохранить настройки", чтобы записать в JSON.');
+  });
+
+  debugBallRadiusRatio.addEventListener('change', () => {
+    updatePhysicsSettingsFromInputs();
+    setDebugStatus('Радиус шара обновлен. Нажмите "Сохранить настройки", чтобы записать в JSON.');
+  });
+
+  debugBackgroundColor.addEventListener('change', () => {
+    if (!updateCurrentLevelColorsFromInputs()) return;
+    setDebugStatus('Цвет фона уровня обновлен. Нажмите "Сохранить уровень в JSON".');
+  });
+
+  debugFieldColor.addEventListener('change', () => {
+    if (!updateCurrentLevelColorsFromInputs()) return;
+    setDebugStatus('Цвет игрового поля обновлен. Нажмите "Сохранить уровень в JSON".');
   });
 
   debugResetPolygonBtn.addEventListener('click', () => {
