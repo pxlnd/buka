@@ -16,7 +16,8 @@ const LEVEL_VISUAL_DEFAULTS = Object.freeze({
 const DEFAULT_COMMON_SETTINGS = Object.freeze({
   physics: {
     impulse: 0.2,
-    braking: 0.0035
+    braking: 0.0035,
+    ballRadiusRatio: 0.0444
   }
 });
 
@@ -73,6 +74,7 @@ const debugClearStageBtn = document.getElementById('debugClearStageBtn');
 const debugBallColor = document.getElementById('debugBallColor');
 const debugBallImpulse = document.getElementById('debugBallImpulse');
 const debugBallBraking = document.getElementById('debugBallBraking');
+const debugBallRadiusRatio = document.getElementById('debugBallRadiusRatio');
 const debugBackgroundColor = document.getElementById('debugBackgroundColor');
 const debugFieldColor = document.getElementById('debugFieldColor');
 const debugSaveSettingsBtn = document.getElementById('debugSaveSettingsBtn');
@@ -549,11 +551,18 @@ function normalizeBraking(value) {
   return round(clamp(candidate, 0.0005, 0.03), 6);
 }
 
+function normalizeBallRadiusRatio(value) {
+  const parsed = Number(value);
+  const candidate = Number.isFinite(parsed) ? parsed : DEFAULT_COMMON_SETTINGS.physics.ballRadiusRatio;
+  return round(clamp(candidate, 0.01, 0.2), 4);
+}
+
 function normalizeCommonSettings(raw) {
   return {
     physics: {
       impulse: normalizeImpulse(raw?.physics?.impulse),
-      braking: normalizeBraking(raw?.physics?.braking)
+      braking: normalizeBraking(raw?.physics?.braking),
+      ballRadiusRatio: normalizeBallRadiusRatio(raw?.physics?.ballRadiusRatio)
     }
   };
 }
@@ -623,7 +632,8 @@ function serializeCommonSettings(settings) {
   return {
     physics: {
       impulse: normalizeImpulse(settings?.physics?.impulse),
-      braking: normalizeBraking(settings?.physics?.braking)
+      braking: normalizeBraking(settings?.physics?.braking),
+      ballRadiusRatio: normalizeBallRadiusRatio(settings?.physics?.ballRadiusRatio)
     }
   };
 }
@@ -914,9 +924,18 @@ function rebuildWorldObstacles() {
   state.worldObstacles = worldObstacles;
 }
 
+function updateBallRadiusFromCanvas() {
+  const width = Number(state.canvasRect?.width);
+  if (!Number.isFinite(width) || width <= 0) return;
+
+  const ratio = normalizeBallRadiusRatio(state.commonSettings?.physics?.ballRadiusRatio);
+  state.ball.r = clamp(width * ratio, 6, width * 0.25);
+}
+
 function syncBallWithStage() {
   const stage = currentStage();
   stage.start = normalizeStart(stage.start, stage.polygon);
+  updateBallRadiusFromCanvas();
 
   state.ball.x = state.arena.x + stage.start.x * state.arena.w;
   state.ball.y = state.arena.y + stage.start.y * state.arena.h;
@@ -1052,11 +1071,13 @@ function formatDecimal(value, digits = 4) {
 function syncPhysicsInputs() {
   debugBallImpulse.value = formatDecimal(state.commonSettings.physics.impulse, 4);
   debugBallBraking.value = formatDecimal(state.commonSettings.physics.braking, 6);
+  debugBallRadiusRatio.value = formatDecimal(state.commonSettings.physics.ballRadiusRatio, 4);
 }
 
 function setCommonSettings(nextSettings) {
   state.commonSettings = normalizeCommonSettings(nextSettings);
   syncPhysicsInputs();
+  updateBallRadiusFromCanvas();
 }
 
 function updatePhysicsSettingsFromInputs() {
@@ -1064,7 +1085,8 @@ function updatePhysicsSettingsFromInputs() {
     ...state.commonSettings,
     physics: {
       impulse: debugBallImpulse.value,
-      braking: debugBallBraking.value
+      braking: debugBallBraking.value,
+      ballRadiusRatio: debugBallRadiusRatio.value
     }
   });
 }
@@ -2403,6 +2425,7 @@ function resizeCanvas() {
   state.arena.y = pad;
   state.arena.w = state.canvasRect.width - pad * 2;
   state.arena.h = state.canvasRect.height - pad * 2;
+  updateBallRadiusFromCanvas();
 
   if (state.levels.length) {
     rebuildWorldPolygon();
@@ -2643,6 +2666,11 @@ function bindUi() {
   debugBallBraking.addEventListener('change', () => {
     updatePhysicsSettingsFromInputs();
     setDebugStatus('Торможение обновлено. Нажмите "Сохранить настройки", чтобы записать в JSON.');
+  });
+
+  debugBallRadiusRatio.addEventListener('change', () => {
+    updatePhysicsSettingsFromInputs();
+    setDebugStatus('Радиус шара обновлен. Нажмите "Сохранить настройки", чтобы записать в JSON.');
   });
 
   debugBackgroundColor.addEventListener('change', () => {

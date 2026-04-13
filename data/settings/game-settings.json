@@ -1,6 +1,7 @@
 {
   "physics": {
     "impulse": 0.3,
-    "braking": 0.015
+    "braking": 0.015,
+    "ballRadiusRatio": 0.045
   }
 }

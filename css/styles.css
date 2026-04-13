@@ -148,12 +148,13 @@ body {
 
 .board-card {
   position: relative;
-  width: min(90vw, 360px, calc((100dvh - 178px) * 0.92));
-  aspect-ratio: 0.92;
+  width: min(95vw, 400px, calc((100dvh - 178px) * 0.85));
+  aspect-ratio: 0.85;
   margin: 0;
   align-self: center;
   justify-self: center;
   margin-bottom: 50px;
+  padding: 0px;
 }
 
 #gameCanvas {

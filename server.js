@@ -27,7 +27,8 @@ const LEVEL_VISUAL_DEFAULTS = Object.freeze({
 const DEFAULT_COMMON_SETTINGS = Object.freeze({
   physics: {
     impulse: 0.2,
-    braking: 0.0035
+    braking: 0.0035,
+    ballRadiusRatio: 0.0444
   }
 });
 
@@ -137,6 +138,12 @@ function normalizeBraking(value) {
   return Math.max(0.0005, Math.min(0.03, parsed));
 }
 
+function normalizeBallRadiusRatio(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_COMMON_SETTINGS.physics.ballRadiusRatio;
+  return Math.max(0.01, Math.min(0.2, parsed));
+}
+
 function isHexColor(value) {
   return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value.trim());
 }
@@ -167,7 +174,8 @@ function normalizeCommonSettings(body) {
   return {
     physics: {
       impulse: Number(normalizeImpulse(body?.physics?.impulse).toFixed(4)),
-      braking: Number(normalizeBraking(body?.physics?.braking).toFixed(6))
+      braking: Number(normalizeBraking(body?.physics?.braking).toFixed(6)),
+      ballRadiusRatio: Number(normalizeBallRadiusRatio(body?.physics?.ballRadiusRatio).toFixed(4))
     }
   };
 }
@@ -189,6 +197,11 @@ function validateCommonSettingsPayload(body) {
   const braking = Number(body.physics.braking);
   if (!Number.isFinite(braking) || braking < 0.0005 || braking > 0.03) {
     return 'physics.braking должен быть числом в диапазоне 0.0005..0.03.';
+  }
+
+  const ballRadiusRatio = Number(body.physics.ballRadiusRatio);
+  if (!Number.isFinite(ballRadiusRatio) || ballRadiusRatio < 0.01 || ballRadiusRatio > 0.2) {
+    return 'physics.ballRadiusRatio должен быть числом в диапазоне 0.01..0.2.';
   }
 
   return null;
