@@ -1,4 +1,18 @@
 const STAGES_PER_LEVEL = 5;
+const DEFAULT_LEVEL_VISUALS = Object.freeze({
+  background: '#DCE7FF',
+  field: '#8692FF'
+});
+const LEVEL_VISUAL_DEFAULTS = Object.freeze({
+  1: Object.freeze({
+    background: '#DCE7FF',
+    field: '#8692FF'
+  }),
+  2: Object.freeze({
+    background: '#BC9AFB',
+    field: '#FFFFFF'
+  })
+});
 const DEFAULT_COMMON_SETTINGS = Object.freeze({
   physics: {
     impulse: 0.2,
@@ -50,6 +64,8 @@ const debugClearStageBtn = document.getElementById('debugClearStageBtn');
 const debugBallColor = document.getElementById('debugBallColor');
 const debugBallImpulse = document.getElementById('debugBallImpulse');
 const debugBallBraking = document.getElementById('debugBallBraking');
+const debugBackgroundColor = document.getElementById('debugBackgroundColor');
+const debugFieldColor = document.getElementById('debugFieldColor');
 const debugSaveSettingsBtn = document.getElementById('debugSaveSettingsBtn');
 const debugToolRow = document.getElementById('debugToolRow');
 const debugResetPolygonBtn = document.getElementById('debugResetPolygonBtn');
@@ -78,6 +94,10 @@ const state = {
       impulse: DEFAULT_COMMON_SETTINGS.physics.impulse,
       braking: DEFAULT_COMMON_SETTINGS.physics.braking
     }
+  },
+  levelVisuals: {
+    background: DEFAULT_LEVEL_VISUALS.background,
+    field: DEFAULT_LEVEL_VISUALS.field
   },
   arena: { x: 16, y: 16, w: 328, h: 328 },
   worldPolygon: {
@@ -128,6 +148,33 @@ function clonePoints(points) {
 
 function defaultPolygon() {
   return clonePoints(DEFAULT_POLYGON);
+}
+
+function isHexColor(value) {
+  return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value.trim());
+}
+
+function normalizeHexColor(value, fallback) {
+  if (!isHexColor(value)) return fallback;
+  return value.trim().toUpperCase();
+}
+
+function normalizeLevelVisualSettings(rawVisuals, fallback = DEFAULT_LEVEL_VISUALS) {
+  const safeFallback = {
+    background: normalizeHexColor(fallback?.background, DEFAULT_LEVEL_VISUALS.background),
+    field: normalizeHexColor(fallback?.field, DEFAULT_LEVEL_VISUALS.field)
+  };
+
+  return {
+    background: normalizeHexColor(rawVisuals?.background, safeFallback.background),
+    field: normalizeHexColor(rawVisuals?.field, safeFallback.field)
+  };
+}
+
+function defaultLevelVisualsForNumber(levelNumber) {
+  const key = clamp(Number(levelNumber) || 1, 1, 9999);
+  const preset = LEVEL_VISUAL_DEFAULTS[key];
+  return normalizeLevelVisualSettings(preset, DEFAULT_LEVEL_VISUALS);
 }
 
 function isValidColorToken(token) {
@@ -294,9 +341,12 @@ function makeBlankStage() {
 }
 
 function makeBlankLevel(number) {
+  const visuals = defaultLevelVisualsForNumber(number);
   return {
     number,
     fileName: fileNameForLevel(number),
+    background: visuals.background,
+    field: visuals.field,
     stages: Array.from({ length: STAGES_PER_LEVEL }, () => makeBlankStage())
   };
 }
@@ -496,6 +546,10 @@ function normalizeCommonSettings(raw) {
 function normalizeLevel(rawLevel, fileName = null) {
   const fileNumber = parseLevelNumberFromFile(fileName || '');
   const number = clamp(Number(rawLevel?.number) || fileNumber || 1, 1, 9999);
+  const visuals = normalizeLevelVisualSettings({
+    background: rawLevel?.background ?? rawLevel?.visuals?.background,
+    field: rawLevel?.field ?? rawLevel?.visuals?.field
+  }, defaultLevelVisualsForNumber(number));
 
   const sourceStages = Array.isArray(rawLevel?.stages) ? rawLevel.stages : [];
   const stages = [];
@@ -507,6 +561,8 @@ function normalizeLevel(rawLevel, fileName = null) {
   return {
     number,
     fileName: fileName || fileNameForLevel(number),
+    background: visuals.background,
+    field: visuals.field,
     stages
   };
 }
@@ -538,8 +594,12 @@ function serializeStage(stage) {
 }
 
 function serializeLevel(level) {
+  const visuals = normalizeLevelVisualSettings(level, defaultLevelVisualsForNumber(level.number));
+
   return {
     number: level.number,
+    background: visuals.background,
+    field: visuals.field,
     stages: level.stages.map(serializeStage)
   };
 }
@@ -656,6 +716,18 @@ function currentLevel() {
 
 function currentStage() {
   return currentLevel().stages[state.stageIndex];
+}
+
+function currentLevelVisualSettings(level = null) {
+  const target = level || (state.levels.length ? currentLevel() : null);
+  const number = clamp(Number(target?.number) || 1, 1, 9999);
+  return normalizeLevelVisualSettings(target, defaultLevelVisualsForNumber(number));
+}
+
+function applyLevelVisualSettings(level = null) {
+  const visuals = currentLevelVisualSettings(level);
+  state.levelVisuals = visuals;
+  document.documentElement.style.setProperty('--level-bg', visuals.background);
 }
 
 function ensureCurrentStageShape() {
@@ -972,13 +1044,43 @@ function setCommonSettings(nextSettings) {
   syncPhysicsInputs();
 }
 
-function updateCommonSettingsFromInputs() {
+function updatePhysicsSettingsFromInputs() {
   setCommonSettings({
+    ...state.commonSettings,
     physics: {
       impulse: debugBallImpulse.value,
       braking: debugBallBraking.value
     }
   });
+}
+
+function updateCurrentLevelColorsFromInputs() {
+  if (!state.levels.length) return true;
+
+  const level = currentLevel();
+  const currentVisuals = currentLevelVisualSettings(level);
+  const rawBackground = String(debugBackgroundColor.value || '').trim();
+  const rawField = String(debugFieldColor.value || '').trim();
+
+  if (!isHexColor(rawBackground) || !isHexColor(rawField)) {
+    debugBackgroundColor.value = currentVisuals.background;
+    debugFieldColor.value = currentVisuals.field;
+    setDebugStatus('Цвета должны быть в формате #RRGGBB.', true);
+    return false;
+  }
+
+  level.background = normalizeHexColor(rawBackground, currentVisuals.background);
+  level.field = normalizeHexColor(rawField, currentVisuals.field);
+  applyLevelVisualSettings(level);
+
+  debugBackgroundColor.value = level.background;
+  debugFieldColor.value = level.field;
+  return true;
+}
+
+function updateCommonSettingsFromInputs() {
+  updatePhysicsSettingsFromInputs();
+  return true;
 }
 
 function hideLoseOverlay() {
@@ -1158,6 +1260,9 @@ function syncDebugPanel() {
   debugLevelNumber.value = String(level.number);
   debugBallColor.value = stage.ballColor;
   syncPhysicsInputs();
+  const visuals = currentLevelVisualSettings(level);
+  debugBackgroundColor.value = visuals.background;
+  debugFieldColor.value = visuals.field;
 
   if (!Object.keys(COLOR_TOKENS).includes(debugGateColor.value)) {
     debugGateColor.value = stage.ballColor;
@@ -1191,6 +1296,7 @@ function loadStage(levelIndex, stageIndex) {
   rebuildWorldPolygon();
   rebuildWorldObstacles();
   syncBallWithStage();
+  applyLevelVisualSettings(currentLevel());
   updateHeader();
   updateProgress();
   syncDebugPanel();
@@ -1554,7 +1660,7 @@ function drawArena() {
   if (points.length < 3) return;
 
   createPolygonPath(points);
-  ctx.fillStyle = "#8896f2";
+  ctx.fillStyle = state.levelVisuals.field;
   ctx.fill();
 
   ctx.lineWidth = 3;
@@ -2330,6 +2436,7 @@ async function saveCurrentLevel() {
   try {
     state.editor.isSaving = true;
     debugSaveBtn.disabled = true;
+    if (!updateCurrentLevelColorsFromInputs()) return;
 
     const level = currentLevel();
     const requestedNumber = clamp(Number(debugLevelNumber.value) || level.number, 1, 9999);
@@ -2360,7 +2467,7 @@ async function saveCommonSettings() {
     state.editor.isSavingSettings = true;
     debugSaveSettingsBtn.disabled = true;
 
-    updateCommonSettingsFromInputs();
+    if (!updateCommonSettingsFromInputs()) return;
     const response = await saveCommonSettingsToServer(state.commonSettings);
     setCommonSettings(response.settings || state.commonSettings);
 
@@ -2479,13 +2586,23 @@ function bindUi() {
   });
 
   debugBallImpulse.addEventListener('change', () => {
-    updateCommonSettingsFromInputs();
+    updatePhysicsSettingsFromInputs();
     setDebugStatus('Импульс обновлен. Нажмите "Сохранить настройки", чтобы записать в JSON.');
   });
 
   debugBallBraking.addEventListener('change', () => {
-    updateCommonSettingsFromInputs();
+    updatePhysicsSettingsFromInputs();
     setDebugStatus('Торможение обновлено. Нажмите "Сохранить настройки", чтобы записать в JSON.');
+  });
+
+  debugBackgroundColor.addEventListener('change', () => {
+    if (!updateCurrentLevelColorsFromInputs()) return;
+    setDebugStatus('Цвет фона уровня обновлен. Нажмите "Сохранить уровень в JSON".');
+  });
+
+  debugFieldColor.addEventListener('change', () => {
+    if (!updateCurrentLevelColorsFromInputs()) return;
+    setDebugStatus('Цвет игрового поля обновлен. Нажмите "Сохранить уровень в JSON".');
   });
 
   debugResetPolygonBtn.addEventListener('click', () => {
