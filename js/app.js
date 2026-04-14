@@ -20,6 +20,8 @@ const DEFAULT_COMMON_SETTINGS = Object.freeze({
     ballRadiusRatio: 0.0444
   }
 });
+const EDITOR_ARENA_OPACITY = 0.62;
+const EDITOR_GATE_OPACITY = 0.7;
 
 const COLOR_TOKENS = {
   yellow: '#f6c531',
@@ -77,6 +79,7 @@ const debugBallBraking = document.getElementById('debugBallBraking');
 const debugBallRadiusRatio = document.getElementById('debugBallRadiusRatio');
 const debugBackgroundColor = document.getElementById('debugBackgroundColor');
 const debugFieldColor = document.getElementById('debugFieldColor');
+const debugStageImage = document.getElementById('debugStageImage');
 const debugSaveSettingsBtn = document.getElementById('debugSaveSettingsBtn');
 const debugToolRow = document.getElementById('debugToolRow');
 const debugResetPolygonBtn = document.getElementById('debugResetPolygonBtn');
@@ -116,6 +119,11 @@ const state = {
     edges: []
   },
   worldObstacles: [],
+  stageImage: {
+    src: '',
+    image: null,
+    isReady: false
+  },
   ball: {
     x: 70,
     y: 300,
@@ -342,15 +350,27 @@ function fileNameForLevel(number) {
   return `level-${number}.json`;
 }
 
+function defaultStageImagePath(levelNumber, stageIndex) {
+  const safeLevelNumber = clamp(Number(levelNumber) || 1, 1, 9999);
+  const safeStageNumber = clamp(Number(stageIndex) + 1 || 1, 1, STAGES_PER_LEVEL);
+  return `./images/level/lvl_${safeLevelNumber}_${safeStageNumber}.png`;
+}
+
+function normalizeStageImagePath(value, fallback = '') {
+  const candidate = typeof value === 'string' ? value.trim() : '';
+  return candidate || fallback;
+}
+
 function setDebugStatus(text, isError = false) {
   debugStatus.textContent = text;
   debugStatus.classList.toggle('error', Boolean(isError));
 }
 
-function makeBlankStage() {
+function makeBlankStage(levelNumber = 1, stageIndex = 0) {
   return {
     ballColor: 'yellow',
     start: { x: 0.14, y: 0.84 },
+    image: defaultStageImagePath(levelNumber, stageIndex),
     polygon: defaultPolygon(),
     gates: [],
     obstacles: []
@@ -364,7 +384,7 @@ function makeBlankLevel(number) {
     fileName: fileNameForLevel(number),
     background: visuals.background,
     field: visuals.field,
-    stages: Array.from({ length: STAGES_PER_LEVEL }, () => makeBlankStage())
+    stages: Array.from({ length: STAGES_PER_LEVEL }, (_, stageIndex) => makeBlankStage(number, stageIndex))
   };
 }
 
@@ -515,12 +535,16 @@ function normalizeStart(start, polygon) {
   };
 }
 
-function normalizeStage(stage) {
+function normalizeStage(stage, levelNumber = 1, stageIndex = 0) {
   const polygon = normalizePolygon(stage?.polygon || stage?.field?.polygon || stage?.field?.points);
   const edgeCount = polygon.length;
 
   const ballColor = isValidColorToken(stage?.ballColor) ? stage.ballColor : 'yellow';
   const start = normalizeStart(stage?.start, polygon);
+  const image = normalizeStageImagePath(
+    stage?.image ?? stage?.levelImage ?? stage?.imagePath,
+    defaultStageImagePath(levelNumber, stageIndex)
+  );
 
   const gates = Array.isArray(stage?.gates)
     ? stage.gates.map((gate) => normalizeGate(gate, edgeCount))
@@ -533,6 +557,7 @@ function normalizeStage(stage) {
   return {
     ballColor,
     start,
+    image,
     polygon,
     gates,
     obstacles
@@ -579,7 +604,7 @@ function normalizeLevel(rawLevel, fileName = null) {
   const stages = [];
 
   for (let i = 0; i < STAGES_PER_LEVEL; i += 1) {
-    stages.push(normalizeStage(sourceStages[i] || makeBlankStage()));
+    stages.push(normalizeStage(sourceStages[i] || makeBlankStage(number, i), number, i));
   }
 
   return {
@@ -591,13 +616,14 @@ function normalizeLevel(rawLevel, fileName = null) {
   };
 }
 
-function serializeStage(stage) {
+function serializeStage(stage, levelNumber, stageIndex) {
   return {
     ballColor: stage.ballColor,
     start: {
       x: round(stage.start.x),
       y: round(stage.start.y)
     },
+    image: normalizeStageImagePath(stage.image, defaultStageImagePath(levelNumber, stageIndex)),
     polygon: stage.polygon.map((point) => ({
       x: round(point.x),
       y: round(point.y)
@@ -624,7 +650,7 @@ function serializeLevel(level) {
     number: level.number,
     background: visuals.background,
     field: visuals.field,
-    stages: level.stages.map(serializeStage)
+    stages: level.stages.map((stage, stageIndex) => serializeStage(stage, level.number, stageIndex))
   };
 }
 
@@ -753,6 +779,54 @@ function applyLevelVisualSettings(level = null) {
   const visuals = currentLevelVisualSettings(level);
   state.levelVisuals = visuals;
   document.documentElement.style.setProperty('--level-bg', visuals.background);
+}
+
+function currentStageImagePath(level = null, stage = null, stageIndex = state.stageIndex) {
+  const targetLevel = level || (state.levels.length ? currentLevel() : null);
+  const targetStage = stage || (targetLevel ? targetLevel.stages[stageIndex] : null);
+  const levelNumber = clamp(Number(targetLevel?.number) || 1, 1, 9999);
+
+  return normalizeStageImagePath(
+    targetStage?.image,
+    defaultStageImagePath(levelNumber, stageIndex)
+  );
+}
+
+function syncCurrentStageImage() {
+  if (!state.levels.length) return;
+
+  const level = currentLevel();
+  const stage = currentStage();
+  const imagePath = currentStageImagePath(level, stage, state.stageIndex);
+  stage.image = imagePath;
+
+  if (state.stageImage.src === imagePath && state.stageImage.image) return;
+
+  state.stageImage.src = imagePath;
+  state.stageImage.image = null;
+  state.stageImage.isReady = false;
+
+  const image = new Image();
+  image.decoding = 'async';
+
+  image.onload = () => {
+    if (state.stageImage.src !== imagePath) return;
+    state.stageImage.image = image;
+    state.stageImage.isReady = true;
+  };
+
+  image.onerror = () => {
+    if (state.stageImage.src !== imagePath) return;
+    state.stageImage.image = null;
+    state.stageImage.isReady = false;
+  };
+
+  image.src = imagePath;
+
+  if (image.complete && image.naturalWidth > 0) {
+    state.stageImage.image = image;
+    state.stageImage.isReady = true;
+  }
 }
 
 function ensureCurrentStageShape() {
@@ -1115,6 +1189,26 @@ function updateCurrentLevelColorsFromInputs() {
   return true;
 }
 
+function updateCurrentStageImageFromInputs() {
+  if (!state.levels.length) return true;
+
+  const level = currentLevel();
+  const stage = currentStage();
+  const fallback = defaultStageImagePath(level.number, state.stageIndex);
+  const rawImagePath = String(debugStageImage.value || '').trim();
+
+  if (!rawImagePath) {
+    debugStageImage.value = currentStageImagePath(level, stage, state.stageIndex);
+    setDebugStatus('Путь к картинке этапа не должен быть пустым.', true);
+    return false;
+  }
+
+  stage.image = normalizeStageImagePath(rawImagePath, fallback);
+  debugStageImage.value = stage.image;
+  syncCurrentStageImage();
+  return true;
+}
+
 function updateCommonSettingsFromInputs() {
   updatePhysicsSettingsFromInputs();
   return true;
@@ -1300,6 +1394,7 @@ function syncDebugPanel() {
   const visuals = currentLevelVisualSettings(level);
   debugBackgroundColor.value = visuals.background;
   debugFieldColor.value = visuals.field;
+  debugStageImage.value = currentStageImagePath(level, stage, state.stageIndex);
 
   if (!Object.keys(COLOR_TOKENS).includes(debugGateColor.value)) {
     debugGateColor.value = stage.ballColor;
@@ -1334,6 +1429,7 @@ function loadStage(levelIndex, stageIndex) {
   rebuildWorldObstacles();
   syncBallWithStage();
   applyLevelVisualSettings(currentLevel());
+  syncCurrentStageImage();
   updateHeader();
   updateProgress();
   syncDebugPanel();
@@ -1688,9 +1784,12 @@ function drawAim() {
   ctx.stroke();
 }
 
-function drawDefaultGate(gate) {
+function drawDefaultGate(gate, opacity = 1) {
   const segment = gateSegment(gate);
   if (!segment) return;
+
+  ctx.save();
+  ctx.globalAlpha = clamp(Number(opacity) || 1, 0, 1);
 
   ctx.beginPath();
   ctx.moveTo(segment.sx, segment.sy);
@@ -1719,13 +1818,18 @@ function drawDefaultGate(gate) {
   ctx.closePath();
   ctx.fillStyle = shadeColor(segment.color, -42);
   ctx.fill();
+
+  ctx.restore();
 }
 
-function drawGate(gate) {
-  drawDefaultGate(gate);
+function drawGate(gate, opacity = 1) {
+  drawDefaultGate(gate, opacity);
 }
 
-function drawDefaultArena(points) {
+function drawDefaultArena(points, opacity = 1) {
+  ctx.save();
+  ctx.globalAlpha = clamp(Number(opacity) || 1, 0, 1);
+
   createPolygonPath(points);
   ctx.fillStyle = state.levelVisuals.field;
   ctx.fill();
@@ -1749,13 +1853,27 @@ function drawDefaultArena(points) {
   }
 
   ctx.restore();
+
+  ctx.restore();
 }
 
-function drawArena() {
+function drawArena(opacity = 1) {
   const points = state.worldPolygon.points;
   if (points.length < 3) return;
 
-  drawDefaultArena(points);
+  drawDefaultArena(points, opacity);
+}
+
+function drawGameplayStageImage() {
+  if (!state.stageImage.isReady || !state.stageImage.image) return;
+
+  ctx.drawImage(
+    state.stageImage.image,
+    state.arena.x,
+    state.arena.y,
+    state.arena.w,
+    state.arena.h
+  );
 }
 
 function drawEditorOverlay() {
@@ -1883,8 +2001,12 @@ function drawScene(pulse = 0, pulseColor = '#ffffff') {
   ctx.save();
   ctx.scale(state.dpr, state.dpr);
 
-  drawArena();
-  currentStage().gates.forEach((gate) => drawGate(gate));
+  drawGameplayStageImage();
+
+  if (state.editor.enabled) {
+    drawArena(EDITOR_ARENA_OPACITY);
+    currentStage().gates.forEach((gate) => drawGate(gate, EDITOR_GATE_OPACITY));
+  }
   drawAim();
   drawBall(pulse, pulseColor);
   drawEditorOverlay();
@@ -2503,6 +2625,20 @@ function insertNewLevel(level) {
   return findLevelIndexByNumber(level.number);
 }
 
+function remapDefaultStageImagesAfterLevelRenumber(level, oldLevelNumber, newLevelNumber) {
+  if (!level || oldLevelNumber === newLevelNumber) return;
+
+  level.stages.forEach((stage, stageIndex) => {
+    const oldDefaultPath = defaultStageImagePath(oldLevelNumber, stageIndex);
+    const newDefaultPath = defaultStageImagePath(newLevelNumber, stageIndex);
+    const currentPath = normalizeStageImagePath(stage.image, oldDefaultPath);
+
+    if (currentPath === oldDefaultPath) {
+      stage.image = newDefaultPath;
+    }
+  });
+}
+
 async function saveCurrentLevel() {
   if (state.editor.isSaving) return;
 
@@ -2510,10 +2646,13 @@ async function saveCurrentLevel() {
     state.editor.isSaving = true;
     debugSaveBtn.disabled = true;
     if (!updateCurrentLevelColorsFromInputs()) return;
+    if (!updateCurrentStageImageFromInputs()) return;
 
     const level = currentLevel();
+    const currentNumber = clamp(Number(level.number) || 1, 1, 9999);
     const requestedNumber = clamp(Number(debugLevelNumber.value) || level.number, 1, 9999);
 
+    remapDefaultStageImagesAfterLevelRenumber(level, currentNumber, requestedNumber);
     level.number = requestedNumber;
     level.fileName = fileNameForLevel(requestedNumber);
 
@@ -2645,7 +2784,7 @@ function bindUi() {
   });
 
   debugClearStageBtn.addEventListener('click', () => {
-    currentLevel().stages[state.stageIndex] = makeBlankStage();
+    currentLevel().stages[state.stageIndex] = makeBlankStage(currentLevel().number, state.stageIndex);
     loadStage(state.levelIndex, state.stageIndex);
     setDebugStatus('Этап очищен.');
   });
@@ -2681,6 +2820,11 @@ function bindUi() {
   debugFieldColor.addEventListener('change', () => {
     if (!updateCurrentLevelColorsFromInputs()) return;
     setDebugStatus('Цвет игрового поля обновлен. Нажмите "Сохранить уровень в JSON".');
+  });
+
+  debugStageImage.addEventListener('change', () => {
+    if (!updateCurrentStageImageFromInputs()) return;
+    setDebugStatus('Картинка этапа обновлена. Нажмите "Сохранить уровень в JSON".');
   });
 
   debugResetPolygonBtn.addEventListener('click', () => {
