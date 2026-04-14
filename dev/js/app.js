@@ -20,6 +20,8 @@ const DEFAULT_COMMON_SETTINGS = Object.freeze({
     ballRadiusRatio: 0.0444
   }
 });
+const EDITOR_ARENA_OPACITY = 0.62;
+const EDITOR_GATE_OPACITY = 0.7;
 
 const COLOR_TOKENS = {
   yellow: '#f6c531',
@@ -77,6 +79,7 @@ const debugBallBraking = document.getElementById('debugBallBraking');
 const debugBallRadiusRatio = document.getElementById('debugBallRadiusRatio');
 const debugBackgroundColor = document.getElementById('debugBackgroundColor');
 const debugFieldColor = document.getElementById('debugFieldColor');
+const debugStageImage = document.getElementById('debugStageImage');
 const debugSaveSettingsBtn = document.getElementById('debugSaveSettingsBtn');
 const debugToolRow = document.getElementById('debugToolRow');
 const debugResetPolygonBtn = document.getElementById('debugResetPolygonBtn');
@@ -84,6 +87,7 @@ const debugVertexList = document.getElementById('debugVertexList');
 const debugGateSide = document.getElementById('debugGateSide');
 const debugGateColor = document.getElementById('debugGateColor');
 const debugGateSize = document.getElementById('debugGateSize');
+const debugGateAt = document.getElementById('debugGateAt');
 const debugGateCount = document.getElementById('debugGateCount');
 const debugGateList = document.getElementById('debugGateList');
 const debugObstacleList = document.getElementById('debugObstacleList');
@@ -116,6 +120,11 @@ const state = {
     edges: []
   },
   worldObstacles: [],
+  stageImage: {
+    src: '',
+    image: null,
+    isReady: false
+  },
   ball: {
     x: 70,
     y: 300,
@@ -139,6 +148,8 @@ const state = {
     dragVertexIndex: -1,
     dragObstacle: null,
     selectedObstacleIndex: -1,
+    dragGate: null,
+    selectedGateIndex: -1,
     isSaving: false,
     isSavingSettings: false
   }
@@ -342,15 +353,27 @@ function fileNameForLevel(number) {
   return `level-${number}.json`;
 }
 
+function defaultStageImagePath(levelNumber, stageIndex) {
+  const safeLevelNumber = clamp(Number(levelNumber) || 1, 1, 9999);
+  const safeStageNumber = clamp(Number(stageIndex) + 1 || 1, 1, STAGES_PER_LEVEL);
+  return `./images/level/lvl_${safeLevelNumber}_${safeStageNumber}.png`;
+}
+
+function normalizeStageImagePath(value, fallback = '') {
+  const candidate = typeof value === 'string' ? value.trim() : '';
+  return candidate || fallback;
+}
+
 function setDebugStatus(text, isError = false) {
   debugStatus.textContent = text;
   debugStatus.classList.toggle('error', Boolean(isError));
 }
 
-function makeBlankStage() {
+function makeBlankStage(levelNumber = 1, stageIndex = 0) {
   return {
     ballColor: 'yellow',
     start: { x: 0.14, y: 0.84 },
+    image: defaultStageImagePath(levelNumber, stageIndex),
     polygon: defaultPolygon(),
     gates: [],
     obstacles: []
@@ -364,7 +387,7 @@ function makeBlankLevel(number) {
     fileName: fileNameForLevel(number),
     background: visuals.background,
     field: visuals.field,
-    stages: Array.from({ length: STAGES_PER_LEVEL }, () => makeBlankStage())
+    stages: Array.from({ length: STAGES_PER_LEVEL }, (_, stageIndex) => makeBlankStage(number, stageIndex))
   };
 }
 
@@ -403,7 +426,42 @@ function normalizePolygon(rawPoints) {
   return cleaned;
 }
 
-function normalizeGate(gate, edgeCount) {
+function gateNormalizationContext(polygon, obstacles = []) {
+  const fieldEdgeCount = Math.max(1, Array.isArray(polygon) ? polygon.length : 0);
+  const obstacleEdgeCounts = Array.isArray(obstacles)
+    ? obstacles.map((obstacle) => Math.max(1, Array.isArray(obstacle?.polygon) ? obstacle.polygon.length : 0))
+    : [];
+
+  return {
+    fieldEdgeCount,
+    obstacleEdgeCounts
+  };
+}
+
+function normalizeGate(gate, context) {
+  const safeContext = {
+    fieldEdgeCount: Math.max(1, Number(context?.fieldEdgeCount) || 1),
+    obstacleEdgeCounts: Array.isArray(context?.obstacleEdgeCounts) ? context.obstacleEdgeCounts : []
+  };
+
+  let target = gate?.target === 'obstacle' ? 'obstacle' : 'field';
+  let obstacleIndex = Number.isFinite(Number(gate?.obstacleIndex))
+    ? Math.floor(Number(gate.obstacleIndex))
+    : -1;
+
+  if (target === 'obstacle') {
+    if (obstacleIndex < 0 || obstacleIndex >= safeContext.obstacleEdgeCounts.length) {
+      target = 'field';
+      obstacleIndex = -1;
+    }
+  } else {
+    obstacleIndex = -1;
+  }
+
+  const edgeCount = target === 'obstacle'
+    ? Math.max(1, safeContext.obstacleEdgeCounts[obstacleIndex] || 1)
+    : safeContext.fieldEdgeCount;
+
   let edge = Number.isFinite(Number(gate?.edge))
     ? Math.floor(Number(gate.edge))
     : LEGACY_SIDE_TO_EDGE[gate?.side] ?? 0;
@@ -416,11 +474,41 @@ function normalizeGate(gate, edgeCount) {
   const color = isValidColorToken(gate?.color) ? gate.color : 'yellow';
 
   return {
+    target,
+    obstacleIndex: target === 'obstacle' ? obstacleIndex : null,
     edge,
     at: round(at),
     size: round(size),
     color
   };
+}
+
+function normalizeStageGates(stage) {
+  const context = gateNormalizationContext(stage.polygon, stage.obstacles);
+  stage.gates = stage.gates.map((gate) => normalizeGate(gate, context));
+}
+
+function removeObstacleAndReindexGates(stage, obstacleIndex) {
+  if (!Number.isInteger(obstacleIndex) || obstacleIndex < 0 || obstacleIndex >= stage.obstacles.length) {
+    return;
+  }
+
+  stage.obstacles.splice(obstacleIndex, 1);
+  stage.gates = stage.gates
+    .filter((gate) => !(gate.target === 'obstacle' && gate.obstacleIndex === obstacleIndex))
+    .map((gate) => {
+      if (gate.target !== 'obstacle' || gate.obstacleIndex == null) return gate;
+      if (gate.obstacleIndex < obstacleIndex) return gate;
+      return {
+        ...gate,
+        obstacleIndex: gate.obstacleIndex - 1
+      };
+    });
+
+  normalizeStageGates(stage);
+
+  state.editor.selectedGateIndex = -1;
+  state.editor.dragGate = null;
 }
 
 function makeRectObstaclePolygon(obstacle) {
@@ -515,24 +603,29 @@ function normalizeStart(start, polygon) {
   };
 }
 
-function normalizeStage(stage) {
+function normalizeStage(stage, levelNumber = 1, stageIndex = 0) {
   const polygon = normalizePolygon(stage?.polygon || stage?.field?.polygon || stage?.field?.points);
-  const edgeCount = polygon.length;
 
   const ballColor = isValidColorToken(stage?.ballColor) ? stage.ballColor : 'yellow';
   const start = normalizeStart(stage?.start, polygon);
-
-  const gates = Array.isArray(stage?.gates)
-    ? stage.gates.map((gate) => normalizeGate(gate, edgeCount))
-    : [];
+  const image = normalizeStageImagePath(
+    stage?.image ?? stage?.levelImage ?? stage?.imagePath,
+    defaultStageImagePath(levelNumber, stageIndex)
+  );
 
   const obstacles = Array.isArray(stage?.obstacles)
     ? stage.obstacles.map(normalizeObstacle).filter(Boolean)
+    : [];
+  const gateContext = gateNormalizationContext(polygon, obstacles);
+
+  const gates = Array.isArray(stage?.gates)
+    ? stage.gates.map((gate) => normalizeGate(gate, gateContext))
     : [];
 
   return {
     ballColor,
     start,
+    image,
     polygon,
     gates,
     obstacles
@@ -579,7 +672,7 @@ function normalizeLevel(rawLevel, fileName = null) {
   const stages = [];
 
   for (let i = 0; i < STAGES_PER_LEVEL; i += 1) {
-    stages.push(normalizeStage(sourceStages[i] || makeBlankStage()));
+    stages.push(normalizeStage(sourceStages[i] || makeBlankStage(number, i), number, i));
   }
 
   return {
@@ -591,23 +684,33 @@ function normalizeLevel(rawLevel, fileName = null) {
   };
 }
 
-function serializeStage(stage) {
+function serializeStage(stage, levelNumber, stageIndex) {
   return {
     ballColor: stage.ballColor,
     start: {
       x: round(stage.start.x),
       y: round(stage.start.y)
     },
+    image: normalizeStageImagePath(stage.image, defaultStageImagePath(levelNumber, stageIndex)),
     polygon: stage.polygon.map((point) => ({
       x: round(point.x),
       y: round(point.y)
     })),
-    gates: stage.gates.map((gate) => ({
-      edge: Math.floor(gate.edge),
-      at: round(gate.at),
-      size: round(gate.size),
-      color: gate.color
-    })),
+    gates: stage.gates.map((gate) => {
+      const serialized = {
+        edge: Math.floor(gate.edge),
+        at: round(gate.at),
+        size: round(gate.size),
+        color: gate.color
+      };
+
+      if (gate.target === 'obstacle' && Number.isInteger(gate.obstacleIndex)) {
+        serialized.target = 'obstacle';
+        serialized.obstacleIndex = Math.floor(gate.obstacleIndex);
+      }
+
+      return serialized;
+    }),
     obstacles: stage.obstacles.map((obstacle) => ({
       polygon: obstacle.polygon.map((point) => ({
         x: round(point.x),
@@ -624,7 +727,7 @@ function serializeLevel(level) {
     number: level.number,
     background: visuals.background,
     field: visuals.field,
-    stages: level.stages.map(serializeStage)
+    stages: level.stages.map((stage, stageIndex) => serializeStage(stage, level.number, stageIndex))
   };
 }
 
@@ -755,13 +858,59 @@ function applyLevelVisualSettings(level = null) {
   document.documentElement.style.setProperty('--level-bg', visuals.background);
 }
 
+function currentStageImagePath(level = null, stage = null, stageIndex = state.stageIndex) {
+  const targetLevel = level || (state.levels.length ? currentLevel() : null);
+  const targetStage = stage || (targetLevel ? targetLevel.stages[stageIndex] : null);
+  const levelNumber = clamp(Number(targetLevel?.number) || 1, 1, 9999);
+
+  return normalizeStageImagePath(
+    targetStage?.image,
+    defaultStageImagePath(levelNumber, stageIndex)
+  );
+}
+
+function syncCurrentStageImage() {
+  if (!state.levels.length) return;
+
+  const level = currentLevel();
+  const stage = currentStage();
+  const imagePath = currentStageImagePath(level, stage, state.stageIndex);
+  stage.image = imagePath;
+
+  if (state.stageImage.src === imagePath && state.stageImage.image) return;
+
+  state.stageImage.src = imagePath;
+  state.stageImage.image = null;
+  state.stageImage.isReady = false;
+
+  const image = new Image();
+  image.decoding = 'async';
+
+  image.onload = () => {
+    if (state.stageImage.src !== imagePath) return;
+    state.stageImage.image = image;
+    state.stageImage.isReady = true;
+  };
+
+  image.onerror = () => {
+    if (state.stageImage.src !== imagePath) return;
+    state.stageImage.image = null;
+    state.stageImage.isReady = false;
+  };
+
+  image.src = imagePath;
+
+  if (image.complete && image.naturalWidth > 0) {
+    state.stageImage.image = image;
+    state.stageImage.isReady = true;
+  }
+}
+
 function ensureCurrentStageShape() {
   const stage = currentStage();
   stage.polygon = normalizePolygon(stage.polygon);
-
-  const edgeCount = stage.polygon.length;
-  stage.gates = stage.gates.map((gate) => normalizeGate(gate, edgeCount));
   stage.obstacles = stage.obstacles.map(normalizeObstacle).filter(Boolean);
+  normalizeStageGates(stage);
   stage.start = normalizeStart(stage.start, stage.polygon);
 }
 
@@ -858,6 +1007,7 @@ function polygonBounds(points) {
 
 function rebuildWorldObstacles() {
   const stage = currentStage();
+  normalizeStageGates(stage);
   const worldObstacles = [];
 
   stage.obstacles.forEach((obstacle, index) => {
@@ -958,9 +1108,34 @@ function gateSpan(gate) {
   };
 }
 
-function gateSegment(gate) {
-  const edge = state.worldPolygon.edges[gate.edge];
+function gateEdgeRef(gate) {
+  if (gate?.target === 'obstacle') {
+    const obstacle = state.worldObstacles.find((entry) => entry.index === gate.obstacleIndex);
+    if (!obstacle) return null;
+    const edge = obstacle.edges[gate.edge] || obstacle.edges.find((entry) => entry.index === gate.edge);
+    if (!edge) return null;
+
+    return {
+      target: 'obstacle',
+      obstacleIndex: obstacle.index,
+      edge
+    };
+  }
+
+  const edge = state.worldPolygon.edges[gate?.edge] || state.worldPolygon.edges.find((entry) => entry.index === gate?.edge);
   if (!edge) return null;
+
+  return {
+    target: 'field',
+    obstacleIndex: null,
+    edge
+  };
+}
+
+function gateSegment(gate) {
+  const edgeRef = gateEdgeRef(gate);
+  if (!edgeRef?.edge) return null;
+  const edge = edgeRef.edge;
 
   const span = gateSpan(gate);
   const startT = span.center - span.half;
@@ -981,8 +1156,8 @@ function gateSegment(gate) {
     cy: (sy + ey) * 0.5,
     tx: edge.tx,
     ty: edge.ty,
-    nx: edge.inx,
-    ny: edge.iny,
+    nx: Number.isFinite(edge.inx) ? edge.inx : edge.ox,
+    ny: Number.isFinite(edge.iny) ? edge.iny : edge.oy,
     color: colorValue(gate.color)
   };
 }
@@ -991,7 +1166,7 @@ function findGateHit(edgeIndex, t) {
   const stage = currentStage();
 
   for (const gate of stage.gates) {
-    if (gate.edge !== edgeIndex) continue;
+    if (gate.target !== 'field' || gate.edge !== edgeIndex) continue;
 
     const span = gateSpan(gate);
     if (t >= span.center - span.half && t <= span.center + span.half) {
@@ -1000,6 +1175,216 @@ function findGateHit(edgeIndex, t) {
   }
 
   return null;
+}
+
+function findGateHitOnObstacle(obstacleIndex, edgeIndex, t) {
+  const stage = currentStage();
+
+  for (const gate of stage.gates) {
+    if (gate.target !== 'obstacle') continue;
+    if (gate.obstacleIndex !== obstacleIndex || gate.edge !== edgeIndex) continue;
+
+    const span = gateSpan(gate);
+    if (t >= span.center - span.half && t <= span.center + span.half) {
+      return gate;
+    }
+  }
+
+  return null;
+}
+
+function findNearestGate(point, maxDistance = 26) {
+  const stage = currentStage();
+  let best = null;
+  let bestDistance = maxDistance;
+
+  stage.gates.forEach((gate, gateIndex) => {
+    const segment = gateSegment(gate);
+    if (!segment) return;
+
+    const closest = pointToSegment(
+      point,
+      { x: segment.sx, y: segment.sy },
+      { x: segment.ex, y: segment.ey }
+    );
+
+    if (closest.dist < bestDistance) {
+      bestDistance = closest.dist;
+      best = {
+        gateIndex,
+        distance: closest.dist
+      };
+    }
+  });
+
+  return best;
+}
+
+function removeGateByIndex(index) {
+  const stage = currentStage();
+  if (!Number.isInteger(index) || index < 0 || index >= stage.gates.length) {
+    return false;
+  }
+
+  stage.gates.splice(index, 1);
+
+  if (state.editor.selectedGateIndex === index) {
+    state.editor.selectedGateIndex = -1;
+  } else if (state.editor.selectedGateIndex > index) {
+    state.editor.selectedGateIndex -= 1;
+  }
+
+  if (state.editor.dragGate?.gateIndex === index) {
+    state.editor.dragGate = null;
+  } else if (state.editor.dragGate?.gateIndex > index) {
+    state.editor.dragGate.gateIndex -= 1;
+  }
+
+  return true;
+}
+
+function gateSideOptionValue(gate) {
+  if (gate?.target === 'obstacle' && Number.isInteger(gate?.obstacleIndex)) {
+    return `obstacle:${gate.obstacleIndex}:${gate.edge}`;
+  }
+  return `field:${gate?.edge ?? 0}`;
+}
+
+function decodeGateSideOptionValue(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value || value === 'auto') return null;
+
+  if (/^\d+$/.test(value)) {
+    return {
+      target: 'field',
+      obstacleIndex: null,
+      edge: Math.floor(Number(value))
+    };
+  }
+
+  const fieldMatch = /^field:(\d+)$/.exec(value);
+  if (fieldMatch) {
+    return {
+      target: 'field',
+      obstacleIndex: null,
+      edge: Math.floor(Number(fieldMatch[1]))
+    };
+  }
+
+  const obstacleMatch = /^obstacle:(\d+):(\d+)$/.exec(value);
+  if (obstacleMatch) {
+    return {
+      target: 'obstacle',
+      obstacleIndex: Math.floor(Number(obstacleMatch[1])),
+      edge: Math.floor(Number(obstacleMatch[2]))
+    };
+  }
+
+  return null;
+}
+
+function gateAttachmentLabel(gate) {
+  if (gate?.target === 'obstacle' && Number.isInteger(gate?.obstacleIndex)) {
+    return `препятствие=${gate.obstacleIndex + 1} ребро=${gate.edge + 1}`;
+  }
+  return `поле ребро=${gate.edge + 1}`;
+}
+
+function syncSelectedGateControls() {
+  const stage = currentStage();
+  const gate = stage.gates[state.editor.selectedGateIndex];
+  if (!gate) {
+    debugGateAt.value = formatDecimal(clamp(Number(debugGateAt.value) || 0.5, 0, 1), 2);
+    return;
+  }
+
+  const gateColorOption = [...debugGateColor.options].find((option) => option.value === gate.color);
+  if (gateColorOption) {
+    debugGateColor.value = gate.color;
+  }
+
+  debugGateSize.value = formatDecimal(gate.size, 2);
+  debugGateAt.value = formatDecimal(gate.at, 2);
+
+  const gateEdgeValue = gateSideOptionValue(gate);
+  if ([...debugGateSide.options].some((option) => option.value === gateEdgeValue)) {
+    debugGateSide.value = gateEdgeValue;
+  }
+}
+
+function setSelectedGate(index) {
+  const stage = currentStage();
+  if (!Number.isInteger(index) || index < 0 || index >= stage.gates.length) {
+    state.editor.selectedGateIndex = -1;
+    state.editor.dragGate = null;
+    syncSelectedGateControls();
+    renderDebugLists();
+    return false;
+  }
+
+  state.editor.selectedGateIndex = index;
+  state.editor.dragGate = null;
+  syncSelectedGateControls();
+  renderDebugLists();
+  return true;
+}
+
+function applySelectedGateFromControls({ useEdge = true, useColor = true, useSize = true, useAt = true } = {}) {
+  const stage = currentStage();
+  const index = state.editor.selectedGateIndex;
+  if (!Number.isInteger(index) || index < 0 || index >= stage.gates.length) {
+    return false;
+  }
+
+  const selected = stage.gates[index];
+  const parsedPlacement = decodeGateSideOptionValue(debugGateSide.value);
+  const nextPlacement = useEdge && parsedPlacement
+    ? parsedPlacement
+    : {
+      target: selected.target,
+      obstacleIndex: selected.obstacleIndex,
+      edge: selected.edge
+    };
+
+  const nextGate = normalizeGate({
+    target: nextPlacement.target,
+    obstacleIndex: nextPlacement.obstacleIndex,
+    edge: nextPlacement.edge,
+    at: useAt ? Number(debugGateAt.value) : selected.at,
+    size: useSize ? Number(debugGateSize.value) : selected.size,
+    color: useColor ? debugGateColor.value : selected.color
+  }, gateNormalizationContext(stage.polygon, stage.obstacles));
+
+  stage.gates[index] = nextGate;
+  syncSelectedGateControls();
+  renderDebugLists();
+  return true;
+}
+
+function projectionOnGate(point, gate) {
+  const edgeRef = gateEdgeRef(gate);
+  if (!edgeRef?.edge) return 0.5;
+  return pointToSegment(point, edgeRef.edge.a, edgeRef.edge.b).t;
+}
+
+function dragSelectedGate(point) {
+  const drag = state.editor.dragGate;
+  if (!drag) return;
+
+  const stage = currentStage();
+  const gate = stage.gates[drag.gateIndex];
+  if (!gate) return;
+
+  const span = gateSpan(gate);
+  const at = clamp(projectionOnGate(point, gate), span.half, 1 - span.half);
+
+  stage.gates[drag.gateIndex] = normalizeGate({
+    ...gate,
+    at: round(at)
+  }, gateNormalizationContext(stage.polygon, stage.obstacles));
+
+  state.editor.selectedGateIndex = drag.gateIndex;
+  syncSelectedGateControls();
 }
 
 function findNearestObstacleVertex(point, maxDistance = 14) {
@@ -1115,6 +1500,26 @@ function updateCurrentLevelColorsFromInputs() {
   return true;
 }
 
+function updateCurrentStageImageFromInputs() {
+  if (!state.levels.length) return true;
+
+  const level = currentLevel();
+  const stage = currentStage();
+  const fallback = defaultStageImagePath(level.number, state.stageIndex);
+  const rawImagePath = String(debugStageImage.value || '').trim();
+
+  if (!rawImagePath) {
+    debugStageImage.value = currentStageImagePath(level, stage, state.stageIndex);
+    setDebugStatus('Путь к картинке этапа не должен быть пустым.', true);
+    return false;
+  }
+
+  stage.image = normalizeStageImagePath(rawImagePath, fallback);
+  debugStageImage.value = stage.image;
+  syncCurrentStageImage();
+  return true;
+}
+
 function updateCommonSettingsFromInputs() {
   updatePhysicsSettingsFromInputs();
   return true;
@@ -1139,15 +1544,36 @@ function syncGateEdgeOptions() {
   autoOption.textContent = 'auto';
   debugGateSide.appendChild(autoOption);
 
-  state.worldPolygon.edges.forEach((edge, index) => {
+  state.worldPolygon.edges.forEach((edge) => {
     const option = document.createElement('option');
-    option.value = String(index);
-    option.textContent = `edge ${edge.index + 1}`;
+    option.value = `field:${edge.index}`;
+    option.textContent = `поле ребро ${edge.index + 1}`;
     debugGateSide.appendChild(option);
   });
 
-  if ([...debugGateSide.options].some((option) => option.value === previous)) {
-    debugGateSide.value = previous;
+  state.worldObstacles.forEach((obstacle) => {
+    obstacle.edges.forEach((edge) => {
+      const option = document.createElement('option');
+      option.value = `obstacle:${obstacle.index}:${edge.index}`;
+      option.textContent = `препятствие ${obstacle.index + 1} ребро ${edge.index + 1}`;
+      debugGateSide.appendChild(option);
+    });
+  });
+
+  const parsedPrevious = decodeGateSideOptionValue(previous);
+  const normalizedPreviousValue = parsedPrevious ? gateSideOptionValue(parsedPrevious) : previous;
+
+  if ([...debugGateSide.options].some((option) => option.value === normalizedPreviousValue)) {
+    debugGateSide.value = normalizedPreviousValue;
+    return;
+  }
+
+  const selectedGate = state.levels.length
+    ? currentStage().gates[state.editor.selectedGateIndex]
+    : null;
+  const selectedGateValue = selectedGate ? gateSideOptionValue(selectedGate) : null;
+  if (selectedGateValue && [...debugGateSide.options].some((option) => option.value === selectedGateValue)) {
+    debugGateSide.value = selectedGateValue;
   } else {
     debugGateSide.value = 'auto';
   }
@@ -1164,6 +1590,16 @@ function renderDebugLists() {
   ) {
     state.editor.selectedObstacleIndex = -1;
   }
+
+  if (
+    state.editor.selectedGateIndex < 0
+    || state.editor.selectedGateIndex >= stage.gates.length
+  ) {
+    state.editor.selectedGateIndex = -1;
+  }
+
+  syncGateEdgeOptions();
+  syncSelectedGateControls();
 
   debugVertexList.innerHTML = '';
   stage.polygon.forEach((vertex, index) => {
@@ -1191,7 +1627,17 @@ function renderDebugLists() {
     stage.gates.forEach((gate, index) => {
       const li = document.createElement('li');
       const text = document.createElement('span');
-      text.textContent = `${index + 1}. edge=${gate.edge + 1} | at=${gate.at.toFixed(2)} | size=${gate.size.toFixed(2)} | ${gate.color}`;
+      const selected = index === state.editor.selectedGateIndex;
+      text.textContent = `${selected ? '● ' : ''}${index + 1}. ${gateAttachmentLabel(gate)} | at=${gate.at.toFixed(2)} | size=${gate.size.toFixed(2)} | ${gate.color}`;
+
+      const buttons = document.createElement('span');
+      buttons.className = 'list-actions';
+
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.className = 'pick-btn';
+      editButton.dataset.gateSelect = String(index);
+      editButton.textContent = selected ? 'Выбрано' : 'Выбрать';
 
       const removeButton = document.createElement('button');
       removeButton.type = 'button';
@@ -1199,7 +1645,8 @@ function renderDebugLists() {
       removeButton.dataset.gateIndex = String(index);
       removeButton.textContent = 'Удалить';
 
-      li.append(text, removeButton);
+      buttons.append(editButton, removeButton);
+      li.append(text, buttons);
       debugGateList.appendChild(li);
     });
   }
@@ -1300,6 +1747,7 @@ function syncDebugPanel() {
   const visuals = currentLevelVisualSettings(level);
   debugBackgroundColor.value = visuals.background;
   debugFieldColor.value = visuals.field;
+  debugStageImage.value = currentStageImagePath(level, stage, state.stageIndex);
 
   if (!Object.keys(COLOR_TOKENS).includes(debugGateColor.value)) {
     debugGateColor.value = stage.ballColor;
@@ -1313,6 +1761,7 @@ function syncDebugPanel() {
   });
 
   syncGateEdgeOptions();
+  syncSelectedGateControls();
 }
 
 function loadStage(levelIndex, stageIndex) {
@@ -1327,6 +1776,8 @@ function loadStage(levelIndex, stageIndex) {
   state.pull.y = 0;
   state.editor.dragObstacle = null;
   state.editor.selectedObstacleIndex = -1;
+  state.editor.dragGate = null;
+  state.editor.selectedGateIndex = -1;
   state.editor.draftObstacle = null;
   hideLoseOverlay();
 
@@ -1334,6 +1785,7 @@ function loadStage(levelIndex, stageIndex) {
   rebuildWorldObstacles();
   syncBallWithStage();
   applyLevelVisualSettings(currentLevel());
+  syncCurrentStageImage();
   updateHeader();
   updateProgress();
   syncDebugPanel();
@@ -1500,6 +1952,21 @@ function handleObstacleCollisions() {
       const inside = pointInPolygon(center, obstacle.points);
       if (!inside && closest.dist >= state.ball.r) {
         continue;
+      }
+
+      if (closest.dist <= state.ball.r + 0.05) {
+        const gate = findGateHitOnObstacle(obstacle.index, closest.edgeIndex, closest.t);
+        if (gate) {
+          const gateColor = colorValue(gate.color).toLowerCase();
+          const ballColor = colorValue(state.ball.colorToken).toLowerCase();
+
+          if (gateColor === ballColor) {
+            onCorrectGate(gate);
+          } else {
+            onStageFailed();
+          }
+          return;
+        }
       }
 
       let nx = 0;
@@ -1688,44 +2155,32 @@ function drawAim() {
   ctx.stroke();
 }
 
-function drawDefaultGate(gate) {
+function drawDefaultGate(gate, opacity = 1) {
   const segment = gateSegment(gate);
   if (!segment) return;
 
+  ctx.save();
+  ctx.globalAlpha = clamp(Number(opacity) || 1, 0, 1);
+
   ctx.beginPath();
   ctx.moveTo(segment.sx, segment.sy);
   ctx.lineTo(segment.ex, segment.ey);
-  ctx.lineCap = 'round';
+  ctx.lineCap = 'butt';
   ctx.lineWidth = 24;
-  ctx.strokeStyle = segment.color;
+  ctx.strokeStyle = shadeColor(segment.color, 40);
   ctx.stroke();
 
-  ctx.beginPath();
-  ctx.moveTo(segment.sx, segment.sy);
-  ctx.lineTo(segment.ex, segment.ey);
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-  ctx.stroke();
-
-  const tipX = segment.cx + segment.nx * 10;
-  const tipY = segment.cy + segment.ny * 10;
-  const baseX = segment.cx - segment.nx * 2;
-  const baseY = segment.cy - segment.ny * 2;
-
-  ctx.beginPath();
-  ctx.moveTo(tipX, tipY);
-  ctx.lineTo(baseX + segment.tx * 7, baseY + segment.ty * 7);
-  ctx.lineTo(baseX - segment.tx * 7, baseY - segment.ty * 7);
-  ctx.closePath();
-  ctx.fillStyle = shadeColor(segment.color, -42);
-  ctx.fill();
+  ctx.restore();
 }
 
-function drawGate(gate) {
-  drawDefaultGate(gate);
+function drawGate(gate, opacity = 1) {
+  drawDefaultGate(gate, opacity);
 }
 
-function drawDefaultArena(points) {
+function drawDefaultArena(points, opacity = 1) {
+  ctx.save();
+  ctx.globalAlpha = clamp(Number(opacity) || 1, 0, 1);
+
   createPolygonPath(points);
   ctx.fillStyle = state.levelVisuals.field;
   ctx.fill();
@@ -1749,13 +2204,27 @@ function drawDefaultArena(points) {
   }
 
   ctx.restore();
+
+  ctx.restore();
 }
 
-function drawArena() {
+function drawArena(opacity = 1) {
   const points = state.worldPolygon.points;
   if (points.length < 3) return;
 
-  drawDefaultArena(points);
+  drawDefaultArena(points, opacity);
+}
+
+function drawGameplayStageImage() {
+  if (!state.stageImage.isReady || !state.stageImage.image) return;
+
+  ctx.drawImage(
+    state.stageImage.image,
+    state.arena.x,
+    state.arena.y,
+    state.arena.w,
+    state.arena.h
+  );
 }
 
 function drawEditorOverlay() {
@@ -1807,6 +2276,22 @@ function drawEditorOverlay() {
   ctx.lineWidth = 2;
   ctx.strokeStyle = 'rgba(34,64,140,0.95)';
   ctx.stroke();
+
+  if (state.editor.tool === 'gate' || state.editor.selectedGateIndex >= 0) {
+    stage.gates.forEach((gate, gateIndex) => {
+      const segment = gateSegment(gate);
+      if (!segment) return;
+
+      const selected = gateIndex === state.editor.selectedGateIndex;
+      ctx.beginPath();
+      ctx.arc(segment.cx, segment.cy, selected ? 7 : 5.2, 0, Math.PI * 2);
+      ctx.fillStyle = selected ? 'rgba(67, 222, 110, 0.95)' : 'rgba(255, 255, 255, 0.92)';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = selected ? 'rgba(14, 114, 44, 0.95)' : 'rgba(22,58,140,0.92)';
+      ctx.stroke();
+    });
+  }
 
   const showObstacleHandles = state.editor.tool === 'obstacle';
   state.worldObstacles.forEach((obstacle, obstacleIndex) => {
@@ -1883,8 +2368,12 @@ function drawScene(pulse = 0, pulseColor = '#ffffff') {
   ctx.save();
   ctx.scale(state.dpr, state.dpr);
 
-  drawArena();
-  currentStage().gates.forEach((gate) => drawGate(gate));
+  drawGameplayStageImage();
+
+  if (state.editor.enabled) {
+    drawArena(EDITOR_ARENA_OPACITY);
+    currentStage().gates.forEach((gate) => drawGate(gate, EDITOR_GATE_OPACITY));
+  }
   drawAim();
   drawBall(pulse, pulseColor);
   drawEditorOverlay();
@@ -1933,40 +2422,87 @@ function findNearestVertexIndex(point, maxDistance = 14) {
   return nearestIndex;
 }
 
-function resolveGateEdge(point) {
+function gateEdgeCandidates() {
+  const candidates = state.worldPolygon.edges.map((edge) => ({
+    target: 'field',
+    obstacleIndex: null,
+    edge: edge.index,
+    a: edge.a,
+    b: edge.b
+  }));
+
+  state.worldObstacles.forEach((obstacle) => {
+    obstacle.edges.forEach((edge) => {
+      candidates.push({
+        target: 'obstacle',
+        obstacleIndex: obstacle.index,
+        edge: edge.index,
+        a: edge.a,
+        b: edge.b
+      });
+    });
+  });
+
+  return candidates;
+}
+
+function resolveGatePlacement(point) {
+  const candidates = gateEdgeCandidates();
+  if (!candidates.length) {
+    return {
+      target: 'field',
+      obstacleIndex: null,
+      edge: 0
+    };
+  }
+
   if (debugGateSide.value !== 'auto') {
-    const edge = Number(debugGateSide.value);
-    if (Number.isInteger(edge) && edge >= 0 && edge < state.worldPolygon.edges.length) {
-      return edge;
+    const parsed = decodeGateSideOptionValue(debugGateSide.value);
+    if (parsed) {
+      const isAvailable = candidates.some((candidate) => (
+        candidate.target === parsed.target
+        && candidate.obstacleIndex === (parsed.obstacleIndex ?? null)
+        && candidate.edge === parsed.edge
+      ));
+      if (isAvailable) {
+        return parsed;
+      }
     }
   }
 
-  let bestEdge = 0;
+  let bestCandidate = candidates[0];
   let bestDistance = Number.POSITIVE_INFINITY;
 
-  state.worldPolygon.edges.forEach((edge, index) => {
-    const candidate = pointToSegment(point, edge.a, edge.b);
-    if (candidate.dist < bestDistance) {
-      bestDistance = candidate.dist;
-      bestEdge = index;
+  candidates.forEach((candidate) => {
+    const projected = pointToSegment(point, candidate.a, candidate.b);
+    if (projected.dist < bestDistance) {
+      bestDistance = projected.dist;
+      bestCandidate = candidate;
     }
   });
 
-  return bestEdge;
+  return {
+    target: bestCandidate.target,
+    obstacleIndex: bestCandidate.obstacleIndex,
+    edge: bestCandidate.edge
+  };
 }
 
-function projectionOnEdge(point, edgeIndex) {
-  const edge = state.worldPolygon.edges[edgeIndex];
-  if (!edge) return 0.5;
-  return pointToSegment(point, edge.a, edge.b).t;
+function projectionOnGatePlacement(point, placement) {
+  const targetEdge = gateEdgeCandidates().find((candidate) => (
+    candidate.target === placement.target
+    && candidate.obstacleIndex === (placement.obstacleIndex ?? null)
+    && candidate.edge === placement.edge
+  ));
+
+  if (!targetEdge) return 0.5;
+  return pointToSegment(point, targetEdge.a, targetEdge.b).t;
 }
 
 function applyPolygonChange() {
   const stage = currentStage();
   stage.polygon = normalizePolygon(stage.polygon);
-
-  const edgeCount = stage.polygon.length;
-  stage.gates = stage.gates.map((gate) => normalizeGate(gate, edgeCount));
+  normalizeStageGates(stage);
   stage.start = normalizeStart(stage.start, stage.polygon);
 
   rebuildWorldPolygon();
@@ -1978,9 +2514,10 @@ function applyPolygonChange() {
 
 function addGateAtPoint(point) {
   const stage = currentStage();
+  const beforeCount = stage.gates.length;
 
-  const edge = resolveGateEdge(point);
-  const baseAt = projectionOnEdge(point, edge);
+  const placement = resolveGatePlacement(point);
+  const baseAt = projectionOnGatePlacement(point, placement);
 
   const count = clamp(Math.floor(Number(debugGateCount.value) || 1), 1, 8);
   const size = clamp(Number(debugGateSize.value) || 0.24, 0.05, 0.95);
@@ -1994,15 +2531,24 @@ function addGateAtPoint(point) {
     const at = clamp(baseAt + shift, half, 1 - half);
 
     stage.gates.push({
-      edge,
+      target: placement.target,
+      obstacleIndex: placement.obstacleIndex,
+      edge: placement.edge,
       at: round(at),
       size: round(size),
       color
     });
   }
 
+  normalizeStageGates(stage);
+
+  if (stage.gates.length > beforeCount) {
+    state.editor.selectedGateIndex = stage.gates.length - 1;
+    syncSelectedGateControls();
+  }
+
   renderDebugLists();
-  setDebugStatus(`Добавлено ворот: ${count}.`);
+  setDebugStatus(`Добавлено ворот: ${count}. Выберите ворота для редактирования позиции и размера.`);
 }
 
 function removeAtPoint(point) {
@@ -2021,22 +2567,10 @@ function removeAtPoint(point) {
     return;
   }
 
-  let nearestGateIndex = -1;
-  let nearestGateDistance = Number.POSITIVE_INFINITY;
-
-  for (let i = 0; i < stage.gates.length; i += 1) {
-    const segment = gateSegment(stage.gates[i]);
-    if (!segment) continue;
-    const distance = Math.hypot(point.x - segment.cx, point.y - segment.cy);
-
-    if (distance < nearestGateDistance) {
-      nearestGateDistance = distance;
-      nearestGateIndex = i;
-    }
-  }
-
-  if (nearestGateIndex >= 0 && nearestGateDistance < 36) {
-    stage.gates.splice(nearestGateIndex, 1);
+  const nearestGate = findNearestGate(point, 36);
+  if (nearestGate) {
+    removeGateByIndex(nearestGate.gateIndex);
+    syncSelectedGateControls();
     renderDebugLists();
     setDebugStatus('Ворота удалены.');
     return;
@@ -2070,7 +2604,7 @@ function removeAtPoint(point) {
 
   const obstacleIndex = findObstacleByPoint(point);
   if (obstacleIndex >= 0) {
-    stage.obstacles.splice(obstacleIndex, 1);
+    removeObstacleAndReindexGates(stage, obstacleIndex);
     if (state.editor.selectedObstacleIndex === obstacleIndex) {
       state.editor.selectedObstacleIndex = -1;
     } else if (state.editor.selectedObstacleIndex > obstacleIndex) {
@@ -2230,6 +2764,14 @@ function handleEditorPointerDown(evt) {
   }
 
   if (state.editor.tool === 'gate') {
+    const gateHit = findNearestGate(point, 22);
+    if (gateHit) {
+      setSelectedGate(gateHit.gateIndex);
+      state.editor.dragGate = { gateIndex: gateHit.gateIndex };
+      setDebugStatus(`Перетаскивание ворот ${gateHit.gateIndex + 1}.`);
+      return;
+    }
+
     addGateAtPoint(point);
     return;
   }
@@ -2332,6 +2874,11 @@ function handleEditorPointerMove(evt) {
 
   if (state.editor.tool === 'obstacle' && state.editor.dragObstacle) {
     dragObstacleVertex(normalized);
+    return;
+  }
+
+  if (state.editor.tool === 'gate' && state.editor.dragGate) {
+    dragSelectedGate(point);
   }
 }
 
@@ -2346,6 +2893,16 @@ function handleEditorPointerUp() {
     state.editor.dragObstacle = null;
     renderDebugLists();
     setDebugStatus('Вершина препятствия обновлена.');
+    return;
+  }
+
+  if (state.editor.tool === 'gate' && state.editor.dragGate) {
+    const gateIndex = state.editor.dragGate.gateIndex;
+    state.editor.dragGate = null;
+    renderDebugLists();
+    if (gateIndex >= 0) {
+      setDebugStatus(`Позиция ворот ${gateIndex + 1} обновлена.`);
+    }
   }
 }
 
@@ -2462,6 +3019,7 @@ function setEditorTool(tool) {
   state.editor.tool = tool;
   state.editor.dragVertexIndex = -1;
   state.editor.dragObstacle = null;
+  state.editor.dragGate = null;
   if (tool !== 'obstacle') {
     state.editor.draftObstacle = null;
     state.editor.selectedObstacleIndex = -1;
@@ -2503,6 +3061,20 @@ function insertNewLevel(level) {
   return findLevelIndexByNumber(level.number);
 }
 
+function remapDefaultStageImagesAfterLevelRenumber(level, oldLevelNumber, newLevelNumber) {
+  if (!level || oldLevelNumber === newLevelNumber) return;
+
+  level.stages.forEach((stage, stageIndex) => {
+    const oldDefaultPath = defaultStageImagePath(oldLevelNumber, stageIndex);
+    const newDefaultPath = defaultStageImagePath(newLevelNumber, stageIndex);
+    const currentPath = normalizeStageImagePath(stage.image, oldDefaultPath);
+
+    if (currentPath === oldDefaultPath) {
+      stage.image = newDefaultPath;
+    }
+  });
+}
+
 async function saveCurrentLevel() {
   if (state.editor.isSaving) return;
 
@@ -2510,10 +3082,13 @@ async function saveCurrentLevel() {
     state.editor.isSaving = true;
     debugSaveBtn.disabled = true;
     if (!updateCurrentLevelColorsFromInputs()) return;
+    if (!updateCurrentStageImageFromInputs()) return;
 
     const level = currentLevel();
+    const currentNumber = clamp(Number(level.number) || 1, 1, 9999);
     const requestedNumber = clamp(Number(debugLevelNumber.value) || level.number, 1, 9999);
 
+    remapDefaultStageImagesAfterLevelRenumber(level, currentNumber, requestedNumber);
     level.number = requestedNumber;
     level.fileName = fileNameForLevel(requestedNumber);
 
@@ -2587,6 +3162,8 @@ function bindUi() {
     state.editor.dragVertexIndex = -1;
     state.editor.dragObstacle = null;
     state.editor.selectedObstacleIndex = -1;
+    state.editor.dragGate = null;
+    state.editor.selectedGateIndex = -1;
 
     if (state.editor.enabled) {
       state.ball.vx = 0;
@@ -2598,6 +3175,7 @@ function bindUi() {
     }
 
     renderDebugLists();
+    syncSelectedGateControls();
   });
 
   debugToolRow.addEventListener('click', (event) => {
@@ -2645,7 +3223,7 @@ function bindUi() {
   });
 
   debugClearStageBtn.addEventListener('click', () => {
-    currentLevel().stages[state.stageIndex] = makeBlankStage();
+    currentLevel().stages[state.stageIndex] = makeBlankStage(currentLevel().number, state.stageIndex);
     loadStage(state.levelIndex, state.stageIndex);
     setDebugStatus('Этап очищен.');
   });
@@ -2681,6 +3259,47 @@ function bindUi() {
   debugFieldColor.addEventListener('change', () => {
     if (!updateCurrentLevelColorsFromInputs()) return;
     setDebugStatus('Цвет игрового поля обновлен. Нажмите "Сохранить уровень в JSON".');
+  });
+
+  debugStageImage.addEventListener('change', () => {
+    if (!updateCurrentStageImageFromInputs()) return;
+    setDebugStatus('Картинка этапа обновлена. Нажмите "Сохранить уровень в JSON".');
+  });
+
+  debugGateSide.addEventListener('change', () => {
+    if (state.editor.selectedGateIndex < 0) {
+      setDebugStatus('Ребро выбрано для добавления новых ворот.');
+      return;
+    }
+    if (!applySelectedGateFromControls({ useEdge: true, useColor: false, useSize: false, useAt: false })) return;
+    setDebugStatus('Ребро выбранных ворот обновлено.');
+  });
+
+  debugGateColor.addEventListener('change', () => {
+    if (state.editor.selectedGateIndex < 0) {
+      setDebugStatus('Цвет применится к новым воротам.');
+      return;
+    }
+    if (!applySelectedGateFromControls({ useEdge: false, useColor: true, useSize: false, useAt: false })) return;
+    setDebugStatus('Цвет выбранных ворот обновлен.');
+  });
+
+  debugGateSize.addEventListener('change', () => {
+    if (state.editor.selectedGateIndex < 0) {
+      setDebugStatus('Размер применится к новым воротам.');
+      return;
+    }
+    if (!applySelectedGateFromControls({ useEdge: false, useColor: false, useSize: true, useAt: true })) return;
+    setDebugStatus('Размер выбранных ворот обновлен.');
+  });
+
+  debugGateAt.addEventListener('change', () => {
+    if (state.editor.selectedGateIndex < 0) {
+      setDebugStatus('Сначала выберите ворота в списке или на поле.', true);
+      return;
+    }
+    if (!applySelectedGateFromControls({ useEdge: false, useColor: false, useSize: false, useAt: true })) return;
+    setDebugStatus('Позиция выбранных ворот обновлена.');
   });
 
   debugResetPolygonBtn.addEventListener('click', () => {
@@ -2731,15 +3350,27 @@ function bindUi() {
   });
 
   debugGateList.addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-gate-index]');
-    if (!button) return;
+    const removeButton = event.target.closest('button[data-gate-index]');
+    if (removeButton) {
+      const index = Number(removeButton.dataset.gateIndex);
+      if (!Number.isInteger(index)) return;
 
-    const index = Number(button.dataset.gateIndex);
+      removeGateByIndex(index);
+      syncSelectedGateControls();
+      renderDebugLists();
+      setDebugStatus('Ворота удалены.');
+      return;
+    }
+
+    const selectButton = event.target.closest('button[data-gate-select]');
+    if (!selectButton) return;
+
+    const index = Number(selectButton.dataset.gateSelect);
     if (!Number.isInteger(index)) return;
 
-    currentStage().gates.splice(index, 1);
-    renderDebugLists();
-    setDebugStatus('Ворота удалены.');
+    setEditorTool('gate');
+    if (!setSelectedGate(index)) return;
+    setDebugStatus(`Выбраны ворота ${index + 1}. Тяните их по ребру или меняйте размер/позицию в панели.`);
   });
 
   debugObstacleList.addEventListener('click', (event) => {
@@ -2748,7 +3379,7 @@ function bindUi() {
       const index = Number(removeButton.dataset.obstacleIndex);
       if (!Number.isInteger(index)) return;
 
-      currentStage().obstacles.splice(index, 1);
+      removeObstacleAndReindexGates(currentStage(), index);
       rebuildWorldObstacles();
 
       if (state.editor.selectedObstacleIndex === index) {
