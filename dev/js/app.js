@@ -22,6 +22,9 @@ const DEFAULT_COMMON_SETTINGS = Object.freeze({
 });
 const EDITOR_ARENA_OPACITY = 0.62;
 const EDITOR_GATE_OPACITY = 0.7;
+const DEFAULT_HOLE_RADIUS = 0.05;
+const MIN_HOLE_RADIUS = 0.01;
+const MAX_HOLE_RADIUS = 0.25;
 
 const COLOR_TOKENS = {
   yellow: '#f6c531',
@@ -90,6 +93,8 @@ const debugGateSize = document.getElementById('debugGateSize');
 const debugGateAt = document.getElementById('debugGateAt');
 const debugGateCount = document.getElementById('debugGateCount');
 const debugGateList = document.getElementById('debugGateList');
+const debugHoleRadius = document.getElementById('debugHoleRadius');
+const debugHoleList = document.getElementById('debugHoleList');
 const debugObstacleList = document.getElementById('debugObstacleList');
 const debugObstacleVertexList = document.getElementById('debugObstacleVertexList');
 const debugObstacleStartBtn = document.getElementById('debugObstacleStartBtn');
@@ -120,6 +125,7 @@ const state = {
     edges: []
   },
   worldObstacles: [],
+  worldHoles: [],
   stageImage: {
     src: '',
     image: null,
@@ -133,7 +139,8 @@ const state = {
     color: COLOR_TOKENS.yellow,
     vx: 0,
     vy: 0,
-    moving: false
+    moving: false,
+    renderScale: 1
   },
   dragging: false,
   pull: { x: 0, y: 0 },
@@ -150,6 +157,8 @@ const state = {
     selectedObstacleIndex: -1,
     dragGate: null,
     selectedGateIndex: -1,
+    dragHole: null,
+    selectedHoleIndex: -1,
     isSaving: false,
     isSavingSettings: false
   }
@@ -376,6 +385,7 @@ function makeBlankStage(levelNumber = 1, stageIndex = 0) {
     image: defaultStageImagePath(levelNumber, stageIndex),
     polygon: defaultPolygon(),
     gates: [],
+    holes: [],
     obstacles: []
   };
 }
@@ -583,6 +593,24 @@ function normalizeObstacle(obstacle) {
   return { polygon: points };
 }
 
+function normalizeHoleRadius(value, fallback = DEFAULT_HOLE_RADIUS) {
+  const parsed = Number(value);
+  const candidate = Number.isFinite(parsed) ? parsed : fallback;
+  return round(clamp(candidate, MIN_HOLE_RADIUS, MAX_HOLE_RADIUS), 4);
+}
+
+function normalizeHole(hole) {
+  if (!hole || !Number.isFinite(Number(hole.x)) || !Number.isFinite(Number(hole.y))) {
+    return null;
+  }
+
+  return {
+    x: round(clamp(Number(hole.x), 0, 1)),
+    y: round(clamp(Number(hole.y), 0, 1)),
+    r: normalizeHoleRadius(hole.r, DEFAULT_HOLE_RADIUS)
+  };
+}
+
 function normalizeStart(start, polygon) {
   const candidate = {
     x: clamp(Number(start?.x) || 0.14, 0, 1),
@@ -616,6 +644,9 @@ function normalizeStage(stage, levelNumber = 1, stageIndex = 0) {
   const obstacles = Array.isArray(stage?.obstacles)
     ? stage.obstacles.map(normalizeObstacle).filter(Boolean)
     : [];
+  const holes = Array.isArray(stage?.holes)
+    ? stage.holes.map(normalizeHole).filter(Boolean)
+    : [];
   const gateContext = gateNormalizationContext(polygon, obstacles);
 
   const gates = Array.isArray(stage?.gates)
@@ -628,6 +659,7 @@ function normalizeStage(stage, levelNumber = 1, stageIndex = 0) {
     image,
     polygon,
     gates,
+    holes,
     obstacles
   };
 }
@@ -711,6 +743,11 @@ function serializeStage(stage, levelNumber, stageIndex) {
 
       return serialized;
     }),
+    holes: stage.holes.map((hole) => ({
+      x: round(hole.x),
+      y: round(hole.y),
+      r: normalizeHoleRadius(hole.r, DEFAULT_HOLE_RADIUS)
+    })),
     obstacles: stage.obstacles.map((obstacle) => ({
       polygon: obstacle.polygon.map((point) => ({
         x: round(point.x),
@@ -910,6 +947,7 @@ function ensureCurrentStageShape() {
   const stage = currentStage();
   stage.polygon = normalizePolygon(stage.polygon);
   stage.obstacles = stage.obstacles.map(normalizeObstacle).filter(Boolean);
+  stage.holes = stage.holes.map(normalizeHole).filter(Boolean);
   normalizeStageGates(stage);
   stage.start = normalizeStart(stage.start, stage.polygon);
 }
@@ -1074,6 +1112,19 @@ function rebuildWorldObstacles() {
   state.worldObstacles = worldObstacles;
 }
 
+function rebuildWorldHoles() {
+  const stage = currentStage();
+  stage.holes = stage.holes.map(normalizeHole).filter(Boolean);
+
+  const scale = Math.min(state.arena.w, state.arena.h);
+  state.worldHoles = stage.holes.map((hole, index) => ({
+    index,
+    x: state.arena.x + hole.x * state.arena.w,
+    y: state.arena.y + hole.y * state.arena.h,
+    r: Math.max(2, hole.r * scale)
+  }));
+}
+
 function updateBallRadiusFromCanvas() {
   const width = Number(state.canvasRect?.width);
   if (!Number.isFinite(width) || width <= 0) return;
@@ -1092,6 +1143,7 @@ function syncBallWithStage() {
   state.ball.vx = 0;
   state.ball.vy = 0;
   state.ball.moving = false;
+  state.ball.renderScale = 1;
   state.ball.colorToken = stage.ballColor;
   state.ball.color = colorValue(stage.ballColor);
 }
@@ -1387,6 +1439,113 @@ function dragSelectedGate(point) {
   syncSelectedGateControls();
 }
 
+function findNearestHole(point, maxDistance = 18) {
+  let best = null;
+  let bestDistance = maxDistance;
+
+  state.worldHoles.forEach((hole) => {
+    const distance = Math.hypot(point.x - hole.x, point.y - hole.y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = {
+        holeIndex: hole.index,
+        distance
+      };
+    }
+  });
+
+  return best;
+}
+
+function removeHoleByIndex(index) {
+  const stage = currentStage();
+  if (!Number.isInteger(index) || index < 0 || index >= stage.holes.length) {
+    return false;
+  }
+
+  stage.holes.splice(index, 1);
+  rebuildWorldHoles();
+
+  if (state.editor.selectedHoleIndex === index) {
+    state.editor.selectedHoleIndex = -1;
+  } else if (state.editor.selectedHoleIndex > index) {
+    state.editor.selectedHoleIndex -= 1;
+  }
+
+  if (state.editor.dragHole?.holeIndex === index) {
+    state.editor.dragHole = null;
+  } else if (state.editor.dragHole?.holeIndex > index) {
+    state.editor.dragHole.holeIndex -= 1;
+  }
+
+  return true;
+}
+
+function setSelectedHole(index) {
+  const stage = currentStage();
+  if (!Number.isInteger(index) || index < 0 || index >= stage.holes.length) {
+    state.editor.selectedHoleIndex = -1;
+    state.editor.dragHole = null;
+    renderDebugLists();
+    return false;
+  }
+
+  state.editor.selectedHoleIndex = index;
+  state.editor.dragHole = null;
+  debugHoleRadius.value = formatDecimal(stage.holes[index].r, 3);
+  renderDebugLists();
+  return true;
+}
+
+function applySelectedHoleRadiusFromInput() {
+  const stage = currentStage();
+  const holeIndex = state.editor.selectedHoleIndex;
+  if (!Number.isInteger(holeIndex) || holeIndex < 0 || holeIndex >= stage.holes.length) {
+    return false;
+  }
+
+  stage.holes[holeIndex].r = normalizeHoleRadius(
+    debugHoleRadius.value,
+    stage.holes[holeIndex].r
+  );
+  debugHoleRadius.value = formatDecimal(stage.holes[holeIndex].r, 3);
+  rebuildWorldHoles();
+  renderDebugLists();
+  return true;
+}
+
+function addHoleAtPoint(normalized) {
+  const stage = currentStage();
+  const hole = normalizeHole({
+    x: normalized.x,
+    y: normalized.y,
+    r: debugHoleRadius.value
+  });
+  if (!hole) return false;
+
+  stage.holes.push(hole);
+  state.editor.selectedHoleIndex = stage.holes.length - 1;
+  debugHoleRadius.value = formatDecimal(hole.r, 3);
+  rebuildWorldHoles();
+  renderDebugLists();
+  return true;
+}
+
+function dragSelectedHole(normalized) {
+  const drag = state.editor.dragHole;
+  if (!drag) return;
+
+  const stage = currentStage();
+  const hole = stage.holes[drag.holeIndex];
+  if (!hole) return;
+
+  hole.x = round(clamp(normalized.x, 0, 1));
+  hole.y = round(clamp(normalized.y, 0, 1));
+  stage.holes[drag.holeIndex] = normalizeHole(hole);
+  rebuildWorldHoles();
+  state.editor.selectedHoleIndex = drag.holeIndex;
+}
+
 function findNearestObstacleVertex(point, maxDistance = 14) {
   let hit = null;
   let bestDistance = maxDistance;
@@ -1598,6 +1757,13 @@ function renderDebugLists() {
     state.editor.selectedGateIndex = -1;
   }
 
+  if (
+    state.editor.selectedHoleIndex < 0
+    || state.editor.selectedHoleIndex >= stage.holes.length
+  ) {
+    state.editor.selectedHoleIndex = -1;
+  }
+
   syncGateEdgeOptions();
   syncSelectedGateControls();
 
@@ -1649,6 +1815,49 @@ function renderDebugLists() {
       li.append(text, buttons);
       debugGateList.appendChild(li);
     });
+  }
+
+  debugHoleList.innerHTML = '';
+  if (!stage.holes.length) {
+    const li = document.createElement('li');
+    li.className = 'list-empty';
+    li.textContent = 'Дырок нет';
+    debugHoleList.appendChild(li);
+  } else {
+    stage.holes.forEach((hole, index) => {
+      const li = document.createElement('li');
+      const text = document.createElement('span');
+      const selected = index === state.editor.selectedHoleIndex;
+      text.textContent = `${selected ? '● ' : ''}${index + 1}. x=${hole.x.toFixed(2)} y=${hole.y.toFixed(2)} r=${hole.r.toFixed(3)}`;
+
+      const buttons = document.createElement('span');
+      buttons.className = 'list-actions';
+
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.className = 'pick-btn';
+      editButton.dataset.holeSelect = String(index);
+      editButton.textContent = selected ? 'Выбрано' : 'Выбрать';
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'remove-btn';
+      removeButton.dataset.holeIndex = String(index);
+      removeButton.textContent = 'Удалить';
+
+      buttons.append(editButton, removeButton);
+      li.append(text, buttons);
+      debugHoleList.appendChild(li);
+    });
+  }
+
+  if (state.editor.selectedHoleIndex >= 0 && stage.holes[state.editor.selectedHoleIndex]) {
+    debugHoleRadius.value = formatDecimal(stage.holes[state.editor.selectedHoleIndex].r, 3);
+  } else {
+    debugHoleRadius.value = formatDecimal(
+      normalizeHoleRadius(debugHoleRadius.value, DEFAULT_HOLE_RADIUS),
+      3
+    );
   }
 
   debugObstacleList.innerHTML = '';
@@ -1778,11 +1987,14 @@ function loadStage(levelIndex, stageIndex) {
   state.editor.selectedObstacleIndex = -1;
   state.editor.dragGate = null;
   state.editor.selectedGateIndex = -1;
+  state.editor.dragHole = null;
+  state.editor.selectedHoleIndex = -1;
   state.editor.draftObstacle = null;
   hideLoseOverlay();
 
   rebuildWorldPolygon();
   rebuildWorldObstacles();
+  rebuildWorldHoles();
   syncBallWithStage();
   applyLevelVisualSettings(currentLevel());
   syncCurrentStageImage();
@@ -1857,7 +2069,59 @@ function onStageFailed() {
   state.ball.moving = false;
   state.ball.vx = 0;
   state.ball.vy = 0;
+  state.ball.renderScale = 1;
   showLoseOverlay();
+}
+
+function onHoleCaptured(hole) {
+  if (state.stageLocked) return;
+
+  state.stageLocked = true;
+  state.dragging = false;
+  state.pull.x = 0;
+  state.pull.y = 0;
+  state.ball.moving = false;
+  state.ball.vx = 0;
+  state.ball.vy = 0;
+
+  const startX = state.ball.x;
+  const startY = state.ball.y;
+  const endX = hole.x;
+  const endY = hole.y;
+  const duration = 320;
+  const startedAt = performance.now();
+
+  const tick = () => {
+    const now = performance.now();
+    const t = clamp((now - startedAt) / duration, 0, 1);
+    const eased = 1 - (1 - t) ** 3;
+
+    state.ball.x = startX + (endX - startX) * eased;
+    state.ball.y = startY + (endY - startY) * eased;
+    state.ball.renderScale = Math.max(0.02, 1 - eased);
+    drawScene();
+
+    if (t < 1) {
+      requestAnimationFrame(tick);
+      return;
+    }
+
+    showLoseOverlay();
+  };
+
+  requestAnimationFrame(tick);
+}
+
+function handleHoleCollisions() {
+  for (const hole of state.worldHoles) {
+    const distance = Math.hypot(state.ball.x - hole.x, state.ball.y - hole.y);
+    if (distance <= hole.r) {
+      onHoleCaptured(hole);
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function handlePolygonCollisions() {
@@ -2034,6 +2298,10 @@ function updatePhysics(dt) {
 
     handleObstacleCollisions();
     if (state.stageLocked) return;
+
+    if (handleHoleCollisions()) {
+      return;
+    }
   }
 
   const frictionBase = 1 - state.commonSettings.physics.braking;
@@ -2064,7 +2332,8 @@ function shadeColor(hex, amount) {
 }
 
 function drawReferenceBall(pulse = 0, pulseColor = '#fff') {
-  const radius = state.ball.r + pulse * 7;
+  const scale = clamp(Number(state.ball.renderScale) || 1, 0.02, 1.2);
+  const radius = state.ball.r * scale + pulse * 7;
   const alpha = 1 - pulse;
   const cx = state.ball.x;
   const cy = state.ball.y;
@@ -2103,7 +2372,7 @@ function drawReferenceBall(pulse = 0, pulseColor = '#fff') {
 
   if (pulse > 0) {
     ctx.beginPath();
-    ctx.arc(cx, cy, state.ball.r + pulse * 20, 0, Math.PI * 2);
+    ctx.arc(cx, cy, state.ball.r * scale + pulse * 20, 0, Math.PI * 2);
     ctx.strokeStyle = `${pulseColor}${Math.round(alpha * 210).toString(16).padStart(2, '0')}`;
     ctx.lineWidth = 4;
     ctx.stroke();
@@ -2175,6 +2444,37 @@ function drawDefaultGate(gate, opacity = 1) {
 
 function drawGate(gate, opacity = 1) {
   drawDefaultGate(gate, opacity);
+}
+
+function drawHoles(opacity = 1) {
+  ctx.save();
+  ctx.globalAlpha = clamp(Number(opacity) || 1, 0, 1);
+  const verticalSquash = 0.84;
+
+  for (const hole of state.worldHoles) {
+    ctx.save();
+    ctx.translate(hole.x, hole.y);
+    ctx.scale(1, verticalSquash);
+
+    const gradient = ctx.createRadialGradient(
+      -hole.r * 0.2,
+      -hole.r * 0.2,
+      Math.max(1, hole.r * 0.1),
+      0,
+      0,
+      hole.r
+    );
+    gradient.addColorStop(0, 'rgba(18, 20, 30, 0.88)');
+    gradient.addColorStop(1, 'rgba(6, 7, 11, 0.98)');
+
+    ctx.beginPath();
+    ctx.ellipse(0, 0, hole.r, hole.r, 0, 0, Math.PI * 2);
+    ctx.fillStyle = gradient;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.restore();
 }
 
 function drawDefaultArena(points, opacity = 1) {
@@ -2293,6 +2593,22 @@ function drawEditorOverlay() {
     });
   }
 
+  if (state.editor.tool === 'hole' || state.editor.selectedHoleIndex >= 0) {
+    state.worldHoles.forEach((hole, holeIndex) => {
+      const selected = holeIndex === state.editor.selectedHoleIndex;
+      ctx.beginPath();
+      ctx.arc(hole.x, hole.y, hole.r + (selected ? 6 : 4), 0, Math.PI * 2);
+      ctx.lineWidth = selected ? 2.6 : 1.8;
+      ctx.strokeStyle = selected ? 'rgba(67, 222, 110, 0.95)' : 'rgba(255, 255, 255, 0.62)';
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(hole.x, hole.y, selected ? 3.5 : 2.8, 0, Math.PI * 2);
+      ctx.fillStyle = selected ? 'rgba(67, 222, 110, 0.95)' : 'rgba(255, 255, 255, 0.9)';
+      ctx.fill();
+    });
+  }
+
   const showObstacleHandles = state.editor.tool === 'obstacle';
   state.worldObstacles.forEach((obstacle, obstacleIndex) => {
     const selected = obstacleIndex === state.editor.selectedObstacleIndex;
@@ -2374,6 +2690,7 @@ function drawScene(pulse = 0, pulseColor = '#ffffff') {
     drawArena(EDITOR_ARENA_OPACITY);
     currentStage().gates.forEach((gate) => drawGate(gate, EDITOR_GATE_OPACITY));
   }
+  drawHoles();
   drawAim();
   drawBall(pulse, pulseColor);
   drawEditorOverlay();
@@ -2507,6 +2824,7 @@ function applyPolygonChange() {
 
   rebuildWorldPolygon();
   rebuildWorldObstacles();
+  rebuildWorldHoles();
   syncBallWithStage();
   syncDebugPanel();
   renderDebugLists();
@@ -2573,6 +2891,14 @@ function removeAtPoint(point) {
     syncSelectedGateControls();
     renderDebugLists();
     setDebugStatus('Ворота удалены.');
+    return;
+  }
+
+  const nearestHole = findNearestHole(point, 24);
+  if (nearestHole) {
+    removeHoleByIndex(nearestHole.holeIndex);
+    renderDebugLists();
+    setDebugStatus('Дырка удалена.');
     return;
   }
 
@@ -2763,6 +3089,21 @@ function handleEditorPointerDown(evt) {
     return;
   }
 
+  if (state.editor.tool === 'hole') {
+    const holeHit = findNearestHole(point, 22);
+    if (holeHit) {
+      setSelectedHole(holeHit.holeIndex);
+      state.editor.dragHole = { holeIndex: holeHit.holeIndex };
+      setDebugStatus(`Перетаскивание дырки ${holeHit.holeIndex + 1}.`);
+      return;
+    }
+
+    if (addHoleAtPoint(normalized)) {
+      setDebugStatus('Дырка добавлена. Перетаскивайте её или меняйте радиус в панели.');
+    }
+    return;
+  }
+
   if (state.editor.tool === 'gate') {
     const gateHit = findNearestGate(point, 22);
     if (gateHit) {
@@ -2877,6 +3218,11 @@ function handleEditorPointerMove(evt) {
     return;
   }
 
+  if (state.editor.tool === 'hole' && state.editor.dragHole) {
+    dragSelectedHole(normalized);
+    return;
+  }
+
   if (state.editor.tool === 'gate' && state.editor.dragGate) {
     dragSelectedGate(point);
   }
@@ -2893,6 +3239,16 @@ function handleEditorPointerUp() {
     state.editor.dragObstacle = null;
     renderDebugLists();
     setDebugStatus('Вершина препятствия обновлена.');
+    return;
+  }
+
+  if (state.editor.tool === 'hole' && state.editor.dragHole) {
+    const holeIndex = state.editor.dragHole.holeIndex;
+    state.editor.dragHole = null;
+    renderDebugLists();
+    if (holeIndex >= 0) {
+      setDebugStatus(`Позиция дырки ${holeIndex + 1} обновлена.`);
+    }
     return;
   }
 
@@ -2987,6 +3343,7 @@ function resizeCanvas() {
   if (state.levels.length) {
     rebuildWorldPolygon();
     rebuildWorldObstacles();
+    rebuildWorldHoles();
     if (!state.ball.moving && !state.dragging && !state.stageLocked) {
       syncBallWithStage();
     }
@@ -3020,9 +3377,13 @@ function setEditorTool(tool) {
   state.editor.dragVertexIndex = -1;
   state.editor.dragObstacle = null;
   state.editor.dragGate = null;
+  state.editor.dragHole = null;
   if (tool !== 'obstacle') {
     state.editor.draftObstacle = null;
     state.editor.selectedObstacleIndex = -1;
+  }
+  if (tool !== 'hole') {
+    state.editor.selectedHoleIndex = -1;
   }
   syncDebugPanel();
   renderDebugLists();
@@ -3164,6 +3525,8 @@ function bindUi() {
     state.editor.selectedObstacleIndex = -1;
     state.editor.dragGate = null;
     state.editor.selectedGateIndex = -1;
+    state.editor.dragHole = null;
+    state.editor.selectedHoleIndex = -1;
 
     if (state.editor.enabled) {
       state.ball.vx = 0;
@@ -3302,6 +3665,20 @@ function bindUi() {
     setDebugStatus('Позиция выбранных ворот обновлена.');
   });
 
+  debugHoleRadius.addEventListener('change', () => {
+    if (state.editor.selectedHoleIndex < 0) {
+      debugHoleRadius.value = formatDecimal(
+        normalizeHoleRadius(debugHoleRadius.value, DEFAULT_HOLE_RADIUS),
+        3
+      );
+      setDebugStatus('Радиус применится к новым дыркам.');
+      return;
+    }
+
+    if (!applySelectedHoleRadiusFromInput()) return;
+    setDebugStatus('Радиус выбранной дырки обновлен.');
+  });
+
   debugResetPolygonBtn.addEventListener('click', () => {
     currentStage().polygon = defaultPolygon();
     applyPolygonChange();
@@ -3371,6 +3748,29 @@ function bindUi() {
     setEditorTool('gate');
     if (!setSelectedGate(index)) return;
     setDebugStatus(`Выбраны ворота ${index + 1}. Тяните их по ребру или меняйте размер/позицию в панели.`);
+  });
+
+  debugHoleList.addEventListener('click', (event) => {
+    const removeButton = event.target.closest('button[data-hole-index]');
+    if (removeButton) {
+      const index = Number(removeButton.dataset.holeIndex);
+      if (!Number.isInteger(index)) return;
+
+      removeHoleByIndex(index);
+      renderDebugLists();
+      setDebugStatus('Дырка удалена.');
+      return;
+    }
+
+    const selectButton = event.target.closest('button[data-hole-select]');
+    if (!selectButton) return;
+
+    const index = Number(selectButton.dataset.holeSelect);
+    if (!Number.isInteger(index)) return;
+
+    setEditorTool('hole');
+    if (!setSelectedHole(index)) return;
+    setDebugStatus(`Выбрана дырка ${index + 1}. Перетаскивайте на поле или меняйте радиус.`);
   });
 
   debugObstacleList.addEventListener('click', (event) => {
