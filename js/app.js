@@ -20,6 +20,15 @@ const DEFAULT_COMMON_SETTINGS = Object.freeze({
     ballRadiusRatio: 0.0444
   }
 });
+const COMMON_SETTINGS_LOAD_PATHS = Object.freeze([
+  './api/settings/common',
+  '/api/settings/common',
+  './data/settings/game-settings.json'
+]);
+const COMMON_SETTINGS_SAVE_PATHS = Object.freeze([
+  './api/settings/common',
+  '/api/settings/common'
+]);
 const EDITOR_ARENA_OPACITY = 0.62;
 const EDITOR_GATE_OPACITY = 0.7;
 const DEFAULT_HOLE_RADIUS = 0.05;
@@ -112,7 +121,8 @@ const state = {
   commonSettings: {
     physics: {
       impulse: DEFAULT_COMMON_SETTINGS.physics.impulse,
-      braking: DEFAULT_COMMON_SETTINGS.physics.braking
+      braking: DEFAULT_COMMON_SETTINGS.physics.braking,
+      ballRadiusRatio: DEFAULT_COMMON_SETTINGS.physics.ballRadiusRatio
     }
   },
   levelVisuals: {
@@ -847,32 +857,51 @@ async function saveLevelToServer(level) {
 }
 
 async function loadCommonSettings() {
-  try {
-    const raw = await fetchJson('/api/settings/common');
-    return normalizeCommonSettings(raw);
-  } catch (error) {
-    setDebugStatus(`Не удалось загрузить общие настройки: ${error.message}. Использую дефолт.`, true);
-    return normalizeCommonSettings(DEFAULT_COMMON_SETTINGS);
+  const errors = [];
+  const tried = new Set();
+
+  for (const path of COMMON_SETTINGS_LOAD_PATHS) {
+    if (tried.has(path)) continue;
+    tried.add(path);
+
+    try {
+      const raw = await fetchJson(path);
+      return normalizeCommonSettings(raw);
+    } catch (error) {
+      errors.push(`${path} -> ${error.message}`);
+    }
   }
+
+  setDebugStatus(`Не удалось загрузить общие настройки: ${errors.join(' | ')}. Использую дефолт.`, true);
+  return normalizeCommonSettings(DEFAULT_COMMON_SETTINGS);
 }
 
 async function saveCommonSettingsToServer(settings) {
   const payload = serializeCommonSettings(settings);
+  const errors = [];
+  const tried = new Set();
 
-  const response = await fetch('/api/settings/common', {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
+  for (const path of COMMON_SETTINGS_SAVE_PATHS) {
+    if (tried.has(path)) continue;
+    tried.add(path);
 
-  if (!response.ok) {
+    const response = await fetch(path, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (response.ok) {
+      return response.json();
+    }
+
     const message = await response.text();
-    throw new Error(message || `${response.status} ${response.statusText}`);
+    errors.push(`${path} -> ${message || `${response.status} ${response.statusText}`}`);
   }
 
-  return response.json();
+  throw new Error(errors.join(' | '));
 }
 
 function currentLevel() {
