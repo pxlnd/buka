@@ -36,6 +36,7 @@
           "color": "yellow"
         }
       ],
+      "holes": [],
       "obstacles": []
     },
     {
@@ -77,6 +78,7 @@
           "color": "red"
         }
       ],
+      "holes": [],
       "obstacles": [
         {
           "polygon": [
@@ -185,6 +187,7 @@
           "obstacleIndex": 1
         }
       ],
+      "holes": [],
       "obstacles": [
         {
           "polygon": [
@@ -245,31 +248,62 @@
       ]
     },
     {
-      "ballColor": "yellow",
+      "ballColor": "pink",
       "start": {
-        "x": 0.14,
-        "y": 0.84
+        "x": 0.501,
+        "y": 0.839
       },
       "image": "./images/level/lvl_1_4.png",
       "polygon": [
         {
-          "x": 0,
-          "y": 0
+          "x": 0.12,
+          "y": 0.0228
         },
         {
-          "x": 1,
-          "y": 0
+          "x": 0.8843,
+          "y": 0.0252
         },
         {
-          "x": 1,
-          "y": 1
+          "x": 0.9423,
+          "y": 0.9754
         },
         {
-          "x": 0,
-          "y": 1
+          "x": 0.0628,
+          "y": 0.9761
         }
       ],
-      "gates": [],
+      "gates": [
+        {
+          "edge": 3,
+          "at": 0.5783,
+          "size": 0.22,
+          "color": "blue"
+        },
+        {
+          "edge": 1,
+          "at": 0.1594,
+          "size": 0.22,
+          "color": "red"
+        },
+        {
+          "edge": 1,
+          "at": 0.4291,
+          "size": 0.22,
+          "color": "pink"
+        }
+      ],
+      "holes": [
+        {
+          "x": 0.6776,
+          "y": 0.5998,
+          "r": 0.08
+        },
+        {
+          "x": 0.2929,
+          "y": 0.1902,
+          "r": 0.08
+        }
+      ],
       "obstacles": []
     },
     {
@@ -298,6 +332,7 @@
         }
       ],
       "gates": [],
+      "holes": [],
       "obstacles": []
     }
   ]
