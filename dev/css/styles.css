@@ -39,7 +39,7 @@ body {
   min-height: 100vh;
   height: 100dvh;
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto auto 1fr;
   justify-items: center;
   align-items: start;
   gap: 14px;
@@ -118,6 +118,45 @@ body {
   width: min(240px, 100%);
   align-self: start;
   padding: 2px 8px;
+}
+
+.lives-wrap {
+  width: min(240px, 100%);
+  align-self: start;
+  display: flex;
+  justify-content: center;
+  padding: 0 8px;
+  margin-top: -4px;
+}
+
+.lives-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 36px;
+}
+
+.life-heart {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  background: url('../images/heart_slot.png') center / contain no-repeat;
+}
+
+.life-heart::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: url('../images/heart.png') center / contain no-repeat;
+  transition: opacity 0.18s ease;
+  width: 88%;
+  margin: auto;
+  bottom: 2px;
+}
+
+.life-heart.is-empty::after {
+  opacity: 0;
 }
 
 .progress-steps {
@@ -472,7 +511,7 @@ body {
       calc(10px + env(safe-area-inset-bottom))
       calc(14px + env(safe-area-inset-left));
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto auto auto 1fr;
     row-gap: 0px;
     justify-items: center;
     align-content: center;
@@ -487,6 +526,21 @@ body {
     width: min(220px, 100%);
     align-self: start;
     padding-inline: 8px;
+  }
+
+  .lives-wrap {
+    width: min(220px, 100%);
+    padding-inline: 8px;
+  }
+
+  .lives-display {
+    min-height: 30px;
+    gap: 2px;
+  }
+
+  .life-heart {
+    width: 28px;
+    height: 28px;
   }
 
   .progress-steps {

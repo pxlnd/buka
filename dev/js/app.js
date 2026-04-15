@@ -1,4 +1,5 @@
 const STAGES_PER_LEVEL = 5;
+const LIVES_PER_STAGE = 3;
 const DEFAULT_LEVEL_VISUALS = Object.freeze({
   background: '#DCE7FF',
   field: '#8692FF'
@@ -41,6 +42,8 @@ const CHAINSAW_IMAGE_PATH = './images/chainsaw.png';
 const CHAINSAW_SHADOW_IMAGE_PATH = './images/chainsaw_shadow.png';
 const POINTER_IMAGE_PATH = './images/pointer.png';
 const SAW_ROTATION_SPEED = Math.PI * 1.2;
+const SAW_DEATH_ANIMATION_MS = 500;
+const SAW_DEATH_PARTICLE_CAP = 34;
 const TUTORIAL_IDLE_DELAY_MS = 5000;
 const TUTORIAL_HOLD_MS = 650;
 const TUTORIAL_PRESS_MS = 280;
@@ -93,6 +96,7 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const levelLabel = document.getElementById('levelLabel');
 const progressSteps = document.getElementById('progressSteps');
+const livesDisplay = document.getElementById('livesDisplay');
 const restartBtn = document.getElementById('restartBtn');
 const backBtn = document.getElementById('backBtn');
 const loseOverlay = document.getElementById('loseOverlay');
@@ -145,6 +149,10 @@ const state = {
   isStageLoading: false,
   stageLocked: false,
   shotUsed: false,
+  lives: {
+    current: LIVES_PER_STAGE,
+    stageKey: null
+  },
   commonSettings: {
     physics: {
       impulse: DEFAULT_COMMON_SETTINGS.physics.impulse,
@@ -198,6 +206,14 @@ const state = {
   },
   dragging: false,
   pull: { x: 0, y: 0 },
+  sawDeath: {
+    active: false,
+    startedAt: 0,
+    durationMs: SAW_DEATH_ANIMATION_MS,
+    originX: 0,
+    originY: 0,
+    particles: []
+  },
   tutorial: {
     active: false,
     idleStartedAt: 0,
@@ -419,6 +435,16 @@ function polygonCentroid(points) {
 
 function stageLabel(index) {
   return `Этап ${index + 1}/${STAGES_PER_LEVEL}`;
+}
+
+function stageKey(levelIndex = state.levelIndex, stageIndex = state.stageIndex) {
+  const levelNumber = clamp(
+    Number(state.levels[levelIndex]?.number) || 1,
+    1,
+    9999
+  );
+  const safeStage = clamp(Number(stageIndex) || 0, 0, STAGES_PER_LEVEL - 1);
+  return `${levelNumber}:${safeStage}`;
 }
 
 function parseLevelNumberFromFile(fileName) {
@@ -1638,6 +1664,68 @@ function syncBallWithStage() {
   state.ball.color = colorValue(stage.ballColor);
 }
 
+function clearSawDeathAnimation() {
+  state.sawDeath.active = false;
+  state.sawDeath.startedAt = 0;
+  state.sawDeath.originX = 0;
+  state.sawDeath.originY = 0;
+  state.sawDeath.particles = [];
+}
+
+function beginSawDeathAnimation() {
+  const originX = state.ball.x;
+  const originY = state.ball.y;
+  const ballRadius = Math.max(2, state.ball.r);
+  const ballColor = colorValue(state.ball.colorToken);
+  const particleCount = clamp(Math.round(ballRadius * 1.7), 18, SAW_DEATH_PARTICLE_CAP);
+  const particles = [];
+
+  for (let i = 0; i < particleCount; i += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = ballRadius * (5.2 + Math.random() * 8.4);
+    const jitter = (Math.random() - 0.5) * ballRadius * 2;
+    const size = Math.max(1, ballRadius * (0.08 + Math.random() * 0.18));
+    const shade = Math.round(-30 + Math.random() * 95);
+    const glow = Math.round(35 + Math.random() * 95);
+
+    particles.push({
+      vx: Math.cos(angle) * speed + jitter,
+      vy: Math.sin(angle) * speed - ballRadius * (1.3 + Math.random() * 1.8),
+      gravity: ballRadius * (20 + Math.random() * 17),
+      delayMs: Math.random() * 70,
+      size,
+      alpha: 0.55 + Math.random() * 0.45,
+      color: shadeColor(ballColor, shade),
+      glowColor: shadeColor(ballColor, glow)
+    });
+  }
+
+  state.sawDeath.active = true;
+  state.sawDeath.startedAt = performance.now();
+  state.sawDeath.originX = originX;
+  state.sawDeath.originY = originY;
+  state.sawDeath.particles = particles;
+}
+
+function updateSawDeathAnimation(timestamp) {
+  if (!state.sawDeath.active) return;
+
+  const elapsed = timestamp - state.sawDeath.startedAt;
+  if (elapsed < state.sawDeath.durationMs) return;
+
+  clearSawDeathAnimation();
+
+  state.dragging = false;
+  state.pull.x = 0;
+  state.pull.y = 0;
+  state.ball.moving = false;
+  state.ball.vx = 0;
+  state.ball.vy = 0;
+  state.ball.renderScale = 1;
+  if (tryConsumeLifeAndReplayStage()) return;
+  showLoseOverlay();
+}
+
 function gateSpan(gate) {
   const size = clamp(Number(gate?.size) || 0.24, 0.05, 0.95);
   const half = size * 0.5;
@@ -2205,6 +2293,55 @@ function updateProgress() {
   }
 }
 
+function updateLivesDisplay() {
+  if (!livesDisplay) return;
+
+  livesDisplay.innerHTML = '';
+  for (let i = 0; i < LIVES_PER_STAGE; i += 1) {
+    const heart = document.createElement('div');
+    heart.className = 'life-heart';
+    if (i >= state.lives.current) heart.classList.add('is-empty');
+    livesDisplay.appendChild(heart);
+  }
+
+  livesDisplay.setAttribute(
+    'aria-label',
+    `Жизни: ${state.lives.current} из ${LIVES_PER_STAGE}`
+  );
+}
+
+function syncLivesForStage({ preserveLives = false, forceRefill = false } = {}) {
+  const nextKey = stageKey();
+  const isNewStage = state.lives.stageKey !== nextKey;
+  const shouldRefill = forceRefill || (!preserveLives && isNewStage);
+
+  if (shouldRefill) {
+    state.lives.current = LIVES_PER_STAGE;
+  }
+
+  state.lives.stageKey = nextKey;
+  updateLivesDisplay();
+}
+
+function tryConsumeLifeAndReplayStage() {
+  if (state.lives.current <= 0) return false;
+
+  state.lives.current = Math.max(0, state.lives.current - 1);
+  updateLivesDisplay();
+
+  if (state.lives.current <= 0) {
+    return false;
+  }
+
+  const retryLevelIndex = state.levelIndex;
+  const retryStageIndex = state.stageIndex;
+  setTimeout(() => {
+    loadStage(retryLevelIndex, retryStageIndex, { preserveLives: true });
+  }, 200);
+
+  return true;
+}
+
 function formatDecimal(value, digits = 4) {
   return Number(value).toFixed(digits).replace(/\.?0+$/, '');
 }
@@ -2620,7 +2757,8 @@ function syncDebugPanel() {
   syncSelectedGateControls();
 }
 
-function loadStage(levelIndex, stageIndex) {
+function loadStage(levelIndex, stageIndex, options = {}) {
+  const { preserveLives = false, forceRefillLives = false } = options;
   const loadToken = state.stageLoadToken + 1;
   state.stageLoadToken = loadToken;
   state.isStageLoading = true;
@@ -2644,6 +2782,8 @@ function loadStage(levelIndex, stageIndex) {
   state.editor.dragSaw = null;
   state.editor.selectedSawIndex = -1;
   state.editor.draftObstacle = null;
+  clearSawDeathAnimation();
+  syncLivesForStage({ preserveLives, forceRefill: forceRefillLives });
   hideLoseOverlay();
 
   rebuildWorldPolygon();
@@ -2660,7 +2800,7 @@ function loadStage(levelIndex, stageIndex) {
 }
 
 function restartLevel() {
-  loadStage(state.levelIndex, 0);
+  loadStage(state.levelIndex, 0, { forceRefillLives: true });
 }
 
 function nextStageOrLevel() {
@@ -2718,6 +2858,7 @@ function onStageFailed() {
   if (state.stageLocked) return;
 
   state.stageLocked = true;
+  clearSawDeathAnimation();
   state.dragging = false;
   state.pull.x = 0;
   state.pull.y = 0;
@@ -2725,7 +2866,21 @@ function onStageFailed() {
   state.ball.vx = 0;
   state.ball.vy = 0;
   state.ball.renderScale = 1;
+  if (tryConsumeLifeAndReplayStage()) return;
   showLoseOverlay();
+}
+
+function onSawCaptured() {
+  if (state.stageLocked) return;
+
+  state.stageLocked = true;
+  state.dragging = false;
+  state.pull.x = 0;
+  state.pull.y = 0;
+  state.ball.moving = false;
+  state.ball.vx = 0;
+  state.ball.vy = 0;
+  beginSawDeathAnimation();
 }
 
 function onHoleCaptured(hole) {
@@ -2761,6 +2916,7 @@ function onHoleCaptured(hole) {
       return;
     }
 
+    if (tryConsumeLifeAndReplayStage()) return;
     showLoseOverlay();
   };
 
@@ -2783,7 +2939,7 @@ function handleSawCollisions() {
   for (const saw of state.worldSaws) {
     const distance = Math.hypot(state.ball.x - saw.x, state.ball.y - saw.y);
     if (distance <= saw.r + state.ball.r) {
-      onStageFailed();
+      onSawCaptured();
       return true;
     }
   }
@@ -3050,7 +3206,45 @@ function drawReferenceBall(pulse = 0, pulseColor = '#fff') {
   }
 }
 
+function drawSawDeathParticles() {
+  if (!state.sawDeath.active || !state.sawDeath.particles.length) return;
+
+  const elapsed = Math.max(0, performance.now() - state.sawDeath.startedAt);
+  const duration = Math.max(1, state.sawDeath.durationMs);
+  const originX = state.sawDeath.originX;
+  const originY = state.sawDeath.originY;
+
+  ctx.save();
+
+  for (const particle of state.sawDeath.particles) {
+    const localElapsed = Math.max(0, elapsed - particle.delayMs);
+    const progress = clamp(localElapsed / duration, 0, 1);
+    if (progress <= 0 || progress >= 1) continue;
+
+    const timeSec = localElapsed / 1000;
+    const px = originX + particle.vx * timeSec;
+    const py = originY + particle.vy * timeSec + 0.5 * particle.gravity * timeSec * timeSec;
+    const alpha = (1 - progress) * particle.alpha;
+    const size = Math.max(0.6, particle.size * (1 - progress * 0.82));
+
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(px, py, size, 0, Math.PI * 2);
+    ctx.fillStyle = particle.color;
+    ctx.fill();
+
+    ctx.globalAlpha = alpha * 0.65;
+    ctx.beginPath();
+    ctx.arc(px - size * 0.22, py - size * 0.22, size * 0.42, 0, Math.PI * 2);
+    ctx.fillStyle = particle.glowColor;
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
 function drawBall(pulse = 0, pulseColor = '#fff') {
+  if (state.sawDeath.active) return;
   drawReferenceBall(pulse, pulseColor);
 }
 
@@ -3469,6 +3663,7 @@ function drawScene(pulse = 0, pulseColor = '#ffffff') {
   }
   drawSaws();
   drawHoles();
+  drawSawDeathParticles();
   drawAim();
   drawTutorialAim();
   drawBall(pulse, pulseColor);
@@ -4187,6 +4382,7 @@ function frame(timestamp) {
   const deltaSeconds = (dt * 16.67) / 1000;
   state.sawVisual.angle = (state.sawVisual.angle + SAW_ROTATION_SPEED * deltaSeconds) % (Math.PI * 2);
 
+  updateSawDeathAnimation(timestamp);
   updatePhysics(dt);
   updateTutorialState(timestamp);
   drawScene();
@@ -4331,7 +4527,7 @@ function bindUi() {
 
   restartBtn.addEventListener('click', restartLevel);
   loseRetryBtn.addEventListener('click', () => {
-    loadStage(state.levelIndex, state.stageIndex);
+    loadStage(state.levelIndex, state.stageIndex, { forceRefillLives: true });
   });
 
   backBtn.addEventListener('click', () => {
