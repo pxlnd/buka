@@ -75,6 +75,7 @@ const restartBtn = document.getElementById('restartBtn');
 const backBtn = document.getElementById('backBtn');
 const loseOverlay = document.getElementById('loseOverlay');
 const loseRetryBtn = document.getElementById('loseRetryBtn');
+const stageLoader = document.getElementById('stageLoader');
 
 const debugCloseBtn = document.getElementById('debugCloseBtn');
 const debugPanel = document.getElementById('debugPanel');
@@ -116,6 +117,8 @@ const state = {
   levels: [],
   levelIndex: 0,
   stageIndex: 0,
+  stageLoadToken: 0,
+  isStageLoading: false,
   stageLocked: false,
   shotUsed: false,
   commonSettings: {
@@ -173,6 +176,8 @@ const state = {
     isSavingSettings: false
   }
 };
+
+const stageImageLoadCache = new Map();
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -935,40 +940,94 @@ function currentStageImagePath(level = null, stage = null, stageIndex = state.st
   );
 }
 
-function syncCurrentStageImage() {
-  if (!state.levels.length) return;
+function setStageLoaderVisible(isVisible) {
+  if (!stageLoader) return;
+  stageLoader.hidden = !isVisible;
+}
+
+function preloadStageImage(path) {
+  const imagePath = normalizeStageImagePath(path, '');
+  if (!imagePath) {
+    return Promise.resolve({
+      path: imagePath,
+      image: null,
+      isReady: false
+    });
+  }
+
+  if (stageImageLoadCache.has(imagePath)) {
+    return stageImageLoadCache.get(imagePath);
+  }
+
+  const loadPromise = new Promise((resolve) => {
+    const image = new Image();
+    image.decoding = 'async';
+    let settled = false;
+
+    const finish = (isReady) => {
+      if (settled) return;
+      settled = true;
+      resolve({
+        path: imagePath,
+        image: isReady ? image : null,
+        isReady
+      });
+    };
+
+    image.onload = () => finish(true);
+    image.onerror = () => finish(false);
+
+    image.src = imagePath;
+    if (image.complete && image.naturalWidth > 0) {
+      finish(true);
+    }
+  }).then((result) => {
+    if (!result.isReady) {
+      stageImageLoadCache.delete(imagePath);
+    }
+    return result;
+  });
+
+  stageImageLoadCache.set(imagePath, loadPromise);
+  return loadPromise;
+}
+
+async function syncCurrentStageImage({ preloadLevel = false } = {}) {
+  if (!state.levels.length) return null;
 
   const level = currentLevel();
   const stage = currentStage();
   const imagePath = currentStageImagePath(level, stage, state.stageIndex);
   stage.image = imagePath;
 
-  if (state.stageImage.src === imagePath && state.stageImage.image) return;
-
   state.stageImage.src = imagePath;
   state.stageImage.image = null;
   state.stageImage.isReady = false;
 
-  const image = new Image();
-  image.decoding = 'async';
+  const loadPaths = preloadLevel
+    ? Array.from(new Set(level.stages.map((entry, index) => currentStageImagePath(level, entry, index))))
+    : [imagePath];
 
-  image.onload = () => {
-    if (state.stageImage.src !== imagePath) return;
-    state.stageImage.image = image;
-    state.stageImage.isReady = true;
-  };
+  const results = await Promise.all(loadPaths.map(preloadStageImage));
+  const currentImage = results.find((item) => item.path === imagePath)
+    || await preloadStageImage(imagePath);
 
-  image.onerror = () => {
-    if (state.stageImage.src !== imagePath) return;
-    state.stageImage.image = null;
-    state.stageImage.isReady = false;
-  };
+  if (state.stageImage.src !== imagePath) return currentImage;
 
-  image.src = imagePath;
+  state.stageImage.image = currentImage.isReady ? currentImage.image : null;
+  state.stageImage.isReady = currentImage.isReady;
+  return currentImage;
+}
 
-  if (image.complete && image.naturalWidth > 0) {
-    state.stageImage.image = image;
-    state.stageImage.isReady = true;
+async function completeStageLoad(token) {
+  try {
+    await syncCurrentStageImage({ preloadLevel: true });
+  } finally {
+    if (token !== state.stageLoadToken) return;
+    syncBallWithStage();
+    state.isStageLoading = false;
+    setStageLoaderVisible(false);
+    state.stageLocked = false;
   }
 }
 
@@ -1704,7 +1763,7 @@ function updateCurrentStageImageFromInputs() {
 
   stage.image = normalizeStageImagePath(rawImagePath, fallback);
   debugStageImage.value = stage.image;
-  syncCurrentStageImage();
+  void syncCurrentStageImage();
   return true;
 }
 
@@ -2003,11 +2062,16 @@ function syncDebugPanel() {
 }
 
 function loadStage(levelIndex, stageIndex) {
+  const loadToken = state.stageLoadToken + 1;
+  state.stageLoadToken = loadToken;
+  state.isStageLoading = true;
+  setStageLoaderVisible(true);
+
   state.levelIndex = clamp(levelIndex, 0, state.levels.length - 1);
   state.stageIndex = clamp(stageIndex, 0, STAGES_PER_LEVEL - 1);
 
   ensureCurrentStageShape();
-  state.stageLocked = false;
+  state.stageLocked = true;
   state.shotUsed = false;
   state.dragging = false;
   state.pull.x = 0;
@@ -2026,11 +2090,11 @@ function loadStage(levelIndex, stageIndex) {
   rebuildWorldHoles();
   syncBallWithStage();
   applyLevelVisualSettings(currentLevel());
-  syncCurrentStageImage();
   updateHeader();
   updateProgress();
   syncDebugPanel();
   renderDebugLists();
+  void completeStageLoad(loadToken);
 }
 
 function restartLevel() {
@@ -2710,6 +2774,8 @@ function drawEditorOverlay() {
 
 function drawScene(pulse = 0, pulseColor = '#ffffff') {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (state.isStageLoading) return;
+
   ctx.save();
   ctx.scale(state.dpr, state.dpr);
 

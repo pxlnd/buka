@@ -341,7 +341,13 @@
           "obstacleIndex": 0
         }
       ],
-      "holes": [],
+      "holes": [
+        {
+          "x": 0.7317,
+          "y": 0.1712,
+          "r": 0.07
+        }
+      ],
       "obstacles": [
         {
           "polygon": [
