@@ -124,6 +124,7 @@
       <div class="tool-row" id="debugToolRow">
         <button class="tool-btn is-active" data-tool="start" type="button">Старт</button>
         <button class="tool-btn" data-tool="hole" type="button">Дырка</button>
+        <button class="tool-btn" data-tool="saw" type="button">Пила</button>
         <button class="tool-btn" data-tool="gate" type="button">Ворота</button>
         <button class="tool-btn" data-tool="polygon" type="button">Полигон</button>
         <button class="tool-btn" data-tool="obstacle" type="button">Препятствие</button>
@@ -185,6 +186,17 @@
         </label>
       </div>
       <ul class="debug-list" id="debugHoleList"></ul>
+    </div>
+
+    <div class="debug-section">
+      <h3>Пилы этапа</h3>
+      <div class="debug-grid compact-grid">
+        <label class="debug-row">
+          <span>Радиус пилы (0.01-0.25)</span>
+          <input id="debugSawRadius" type="number" min="0.01" max="0.25" step="0.01" value="0.05">
+        </label>
+      </div>
+      <ul class="debug-list" id="debugSawList"></ul>
     </div>
 
     <div class="debug-section">
