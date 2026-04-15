@@ -1,4 +1,5 @@
 const STAGES_PER_LEVEL = 5;
+const LIVES_PER_STAGE = 3;
 const DEFAULT_LEVEL_VISUALS = Object.freeze({
   background: '#DCE7FF',
   field: '#8692FF'
@@ -93,6 +94,7 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const levelLabel = document.getElementById('levelLabel');
 const progressSteps = document.getElementById('progressSteps');
+const livesDisplay = document.getElementById('livesDisplay');
 const restartBtn = document.getElementById('restartBtn');
 const backBtn = document.getElementById('backBtn');
 const loseOverlay = document.getElementById('loseOverlay');
@@ -145,6 +147,10 @@ const state = {
   isStageLoading: false,
   stageLocked: false,
   shotUsed: false,
+  lives: {
+    current: LIVES_PER_STAGE,
+    stageKey: null
+  },
   commonSettings: {
     physics: {
       impulse: DEFAULT_COMMON_SETTINGS.physics.impulse,
@@ -419,6 +425,16 @@ function polygonCentroid(points) {
 
 function stageLabel(index) {
   return `Этап ${index + 1}/${STAGES_PER_LEVEL}`;
+}
+
+function stageKey(levelIndex = state.levelIndex, stageIndex = state.stageIndex) {
+  const levelNumber = clamp(
+    Number(state.levels[levelIndex]?.number) || 1,
+    1,
+    9999
+  );
+  const safeStage = clamp(Number(stageIndex) || 0, 0, STAGES_PER_LEVEL - 1);
+  return `${levelNumber}:${safeStage}`;
 }
 
 function parseLevelNumberFromFile(fileName) {
@@ -2205,6 +2221,55 @@ function updateProgress() {
   }
 }
 
+function updateLivesDisplay() {
+  if (!livesDisplay) return;
+
+  livesDisplay.innerHTML = '';
+  for (let i = 0; i < LIVES_PER_STAGE; i += 1) {
+    const heart = document.createElement('div');
+    heart.className = 'life-heart';
+    if (i >= state.lives.current) heart.classList.add('is-empty');
+    livesDisplay.appendChild(heart);
+  }
+
+  livesDisplay.setAttribute(
+    'aria-label',
+    `Жизни: ${state.lives.current} из ${LIVES_PER_STAGE}`
+  );
+}
+
+function syncLivesForStage({ preserveLives = false, forceRefill = false } = {}) {
+  const nextKey = stageKey();
+  const isNewStage = state.lives.stageKey !== nextKey;
+  const shouldRefill = forceRefill || (!preserveLives && isNewStage);
+
+  if (shouldRefill) {
+    state.lives.current = LIVES_PER_STAGE;
+  }
+
+  state.lives.stageKey = nextKey;
+  updateLivesDisplay();
+}
+
+function tryConsumeLifeAndReplayStage() {
+  if (state.lives.current <= 0) return false;
+
+  state.lives.current = Math.max(0, state.lives.current - 1);
+  updateLivesDisplay();
+
+  if (state.lives.current <= 0) {
+    return false;
+  }
+
+  const retryLevelIndex = state.levelIndex;
+  const retryStageIndex = state.stageIndex;
+  setTimeout(() => {
+    loadStage(retryLevelIndex, retryStageIndex, { preserveLives: true });
+  }, 200);
+
+  return true;
+}
+
 function formatDecimal(value, digits = 4) {
   return Number(value).toFixed(digits).replace(/\.?0+$/, '');
 }
@@ -2620,7 +2685,8 @@ function syncDebugPanel() {
   syncSelectedGateControls();
 }
 
-function loadStage(levelIndex, stageIndex) {
+function loadStage(levelIndex, stageIndex, options = {}) {
+  const { preserveLives = false, forceRefillLives = false } = options;
   const loadToken = state.stageLoadToken + 1;
   state.stageLoadToken = loadToken;
   state.isStageLoading = true;
@@ -2644,6 +2710,7 @@ function loadStage(levelIndex, stageIndex) {
   state.editor.dragSaw = null;
   state.editor.selectedSawIndex = -1;
   state.editor.draftObstacle = null;
+  syncLivesForStage({ preserveLives, forceRefill: forceRefillLives });
   hideLoseOverlay();
 
   rebuildWorldPolygon();
@@ -2660,7 +2727,7 @@ function loadStage(levelIndex, stageIndex) {
 }
 
 function restartLevel() {
-  loadStage(state.levelIndex, 0);
+  loadStage(state.levelIndex, 0, { forceRefillLives: true });
 }
 
 function nextStageOrLevel() {
@@ -2725,6 +2792,7 @@ function onStageFailed() {
   state.ball.vx = 0;
   state.ball.vy = 0;
   state.ball.renderScale = 1;
+  if (tryConsumeLifeAndReplayStage()) return;
   showLoseOverlay();
 }
 
@@ -2761,6 +2829,7 @@ function onHoleCaptured(hole) {
       return;
     }
 
+    if (tryConsumeLifeAndReplayStage()) return;
     showLoseOverlay();
   };
 
@@ -4331,7 +4400,7 @@ function bindUi() {
 
   restartBtn.addEventListener('click', restartLevel);
   loseRetryBtn.addEventListener('click', () => {
-    loadStage(state.levelIndex, state.stageIndex);
+    loadStage(state.levelIndex, state.stageIndex, { forceRefillLives: true });
   });
 
   backBtn.addEventListener('click', () => {
