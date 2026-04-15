@@ -39,7 +39,23 @@ const MIN_SAW_RADIUS = 0.01;
 const MAX_SAW_RADIUS = 0.25;
 const CHAINSAW_IMAGE_PATH = './images/chainsaw.png';
 const CHAINSAW_SHADOW_IMAGE_PATH = './images/chainsaw_shadow.png';
+const POINTER_IMAGE_PATH = './images/pointer.png';
 const SAW_ROTATION_SPEED = Math.PI * 1.2;
+const TUTORIAL_IDLE_DELAY_MS = 5000;
+const TUTORIAL_HOLD_MS = 650;
+const TUTORIAL_PRESS_MS = 280;
+const TUTORIAL_DRAG_MS = 860;
+const TUTORIAL_RELEASE_MS = 280;
+const TUTORIAL_PAUSE_MS = 420;
+const TUTORIAL_CYCLE_MS = (
+  TUTORIAL_HOLD_MS
+  + TUTORIAL_PRESS_MS
+  + TUTORIAL_DRAG_MS
+  + TUTORIAL_RELEASE_MS
+  + TUTORIAL_PAUSE_MS
+);
+const TUTORIAL_PULL_MIN = 10;
+const TUTORIAL_PULL_MAX = 60;
 
 const COLOR_TOKENS = {
   yellow: '#f6c531',
@@ -164,6 +180,11 @@ const state = {
     image: null,
     isReady: false
   },
+  tutorialPointerVisual: {
+    src: POINTER_IMAGE_PATH,
+    image: null,
+    isReady: false
+  },
   ball: {
     x: 70,
     y: 300,
@@ -177,6 +198,12 @@ const state = {
   },
   dragging: false,
   pull: { x: 0, y: 0 },
+  tutorial: {
+    active: false,
+    idleStartedAt: 0,
+    cycleStartedAt: 0,
+    pose: null
+  },
   lastTs: 0,
   dpr: 1,
   canvasRect: null,
@@ -202,6 +229,8 @@ const state = {
 const stageImageLoadCache = new Map();
 let sawImageLoadPromise = null;
 let sawShadowImageLoadPromise = null;
+let tutorialPointerImageLoadPromise = null;
+const activeTutorialPointers = new Set();
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -1136,6 +1165,209 @@ function ensureSawShadowImageReady() {
   return sawShadowImageLoadPromise;
 }
 
+function ensureTutorialPointerImageReady() {
+  if (state.tutorialPointerVisual.isReady && state.tutorialPointerVisual.image) {
+    return Promise.resolve(true);
+  }
+
+  if (tutorialPointerImageLoadPromise) {
+    return tutorialPointerImageLoadPromise;
+  }
+
+  tutorialPointerImageLoadPromise = new Promise((resolve) => {
+    const image = new Image();
+    image.decoding = 'async';
+    let settled = false;
+
+    const finish = (isReady) => {
+      if (settled) return;
+      settled = true;
+
+      if (isReady) {
+        state.tutorialPointerVisual.image = image;
+        state.tutorialPointerVisual.isReady = true;
+      } else {
+        state.tutorialPointerVisual.image = null;
+        state.tutorialPointerVisual.isReady = false;
+      }
+
+      resolve(isReady);
+    };
+
+    image.onload = () => finish(true);
+    image.onerror = () => finish(false);
+
+    image.src = state.tutorialPointerVisual.src;
+    if (image.complete && image.naturalWidth > 0) {
+      finish(true);
+    }
+  }).then((isReady) => {
+    if (!isReady) {
+      tutorialPointerImageLoadPromise = null;
+    }
+    return isReady;
+  });
+
+  return tutorialPointerImageLoadPromise;
+}
+
+function easeOutCubic(value) {
+  const t = clamp(value, 0, 1);
+  return 1 - (1 - t) ** 3;
+}
+
+function resetTutorialForCurrentStage(
+  now = performance.now(),
+  { showImmediately = false } = {}
+) {
+  activeTutorialPointers.clear();
+  state.tutorial.active = false;
+  state.tutorial.idleStartedAt = showImmediately
+    ? now - TUTORIAL_IDLE_DELAY_MS
+    : now;
+  state.tutorial.cycleStartedAt = now;
+  state.tutorial.pose = null;
+}
+
+function markTutorialInteractionStart(pointerId) {
+  const key = pointerId ?? 'default';
+  activeTutorialPointers.add(key);
+
+  state.tutorial.active = false;
+  state.tutorial.pose = null;
+}
+
+function markTutorialInteractionEnd(pointerId, now = performance.now()) {
+  const key = pointerId ?? 'default';
+  activeTutorialPointers.delete(key);
+  if (activeTutorialPointers.size > 0) return;
+
+  state.tutorial.active = false;
+  state.tutorial.idleStartedAt = now;
+  state.tutorial.cycleStartedAt = now;
+  state.tutorial.pose = null;
+}
+
+function computeTutorialPose(localMs) {
+  const ballX = state.ball.x;
+  const ballY = state.ball.y;
+  const baseX = ballX + state.ball.r * 0.18;
+  const baseY = ballY + state.ball.r * 0.1;
+  const holdEnd = TUTORIAL_HOLD_MS;
+  const pressEnd = holdEnd + TUTORIAL_PRESS_MS;
+  const dragEnd = pressEnd + TUTORIAL_DRAG_MS;
+  const releaseEnd = dragEnd + TUTORIAL_RELEASE_MS;
+
+  let pointerX = baseX;
+  let pointerY = baseY;
+  let pointerScale = 1;
+  let pullX = 0;
+  let pullY = 0;
+  let showAim = false;
+  let visible = true;
+
+  if (localMs < holdEnd) {
+    return {
+      visible,
+      pointerX,
+      pointerY,
+      pointerScale,
+      pullX,
+      pullY,
+      showAim
+    };
+  }
+
+  if (localMs < pressEnd) {
+    const t = easeOutCubic((localMs - holdEnd) / TUTORIAL_PRESS_MS);
+    pointerScale = 1 - 0.1 * t;
+    pullY = TUTORIAL_PULL_MIN * t;
+    showAim = true;
+    return {
+      visible,
+      pointerX,
+      pointerY,
+      pointerScale,
+      pullX,
+      pullY,
+      showAim
+    };
+  }
+
+  if (localMs < dragEnd) {
+    const t = easeOutCubic((localMs - pressEnd) / TUTORIAL_DRAG_MS);
+    pointerScale = 0.9;
+    pullY = TUTORIAL_PULL_MIN + (TUTORIAL_PULL_MAX - TUTORIAL_PULL_MIN) * t;
+    pointerY = baseY + pullY;
+    showAim = true;
+    return {
+      visible,
+      pointerX,
+      pointerY,
+      pointerScale,
+      pullX,
+      pullY,
+      showAim
+    };
+  }
+
+  if (localMs < releaseEnd) {
+    const t = clamp((localMs - dragEnd) / TUTORIAL_RELEASE_MS, 0, 1);
+    pointerScale = 0.9 + 0.1 * t;
+    pullY = TUTORIAL_PULL_MAX * (1 - t);
+    pointerY = baseY + TUTORIAL_PULL_MAX * (1 - t);
+    showAim = pullY > 2;
+    return {
+      visible,
+      pointerX,
+      pointerY,
+      pointerScale,
+      pullX,
+      pullY,
+      showAim
+    };
+  }
+
+  visible = false;
+  return {
+    visible,
+    pointerX,
+    pointerY,
+    pointerScale,
+    pullX,
+    pullY,
+    showAim
+  };
+}
+
+function updateTutorialState(timestamp) {
+  state.tutorial.pose = null;
+
+  if (
+    state.editor.enabled
+    || state.isStageLoading
+    || state.stageLocked
+    || state.ball.moving
+    || state.dragging
+    || state.shotUsed
+    || activeTutorialPointers.size > 0
+  ) {
+    return;
+  }
+
+  if (!state.tutorial.active) {
+    if (timestamp - state.tutorial.idleStartedAt < TUTORIAL_IDLE_DELAY_MS) {
+      return;
+    }
+    state.tutorial.active = true;
+    state.tutorial.cycleStartedAt = timestamp;
+  }
+
+  const elapsed = timestamp - state.tutorial.cycleStartedAt;
+  const localMs = elapsed % TUTORIAL_CYCLE_MS;
+  state.tutorial.pose = computeTutorialPose(localMs);
+}
+
 async function syncCurrentStageImage({ preloadLevel = false } = {}) {
   if (!state.levels.length) return null;
 
@@ -1168,11 +1400,19 @@ async function completeStageLoad(token) {
     await Promise.all([
       syncCurrentStageImage({ preloadLevel: true }),
       ensureSawImageReady(),
-      ensureSawShadowImageReady()
+      ensureSawShadowImageReady(),
+      ensureTutorialPointerImageReady()
     ]);
   } finally {
     if (token !== state.stageLoadToken) return;
     syncBallWithStage();
+    const shouldShowTutorialImmediately = (
+      Number(currentLevel()?.number) === 1
+      && state.stageIndex === 0
+    );
+    resetTutorialForCurrentStage(performance.now(), {
+      showImmediately: shouldShowTutorialImmediately
+    });
     state.isStageLoading = false;
     setStageLoaderVisible(false);
     state.stageLocked = false;
@@ -2814,12 +3054,10 @@ function drawBall(pulse = 0, pulseColor = '#fff') {
   drawReferenceBall(pulse, pulseColor);
 }
 
-function drawAim() {
-  if (!state.dragging || state.editor.enabled) return;
-
+function drawAimFromPull(rawPullX, rawPullY) {
   const maxPull = 100;
-  const pullX = clamp(state.pull.x, -maxPull, maxPull);
-  const pullY = clamp(state.pull.y, -maxPull, maxPull);
+  const pullX = clamp(rawPullX, -maxPull, maxPull);
+  const pullY = clamp(rawPullY, -maxPull, maxPull);
   const distance = Math.min(Math.hypot(pullX, pullY), maxPull);
   if (distance < 2) return;
 
@@ -2853,6 +3091,46 @@ function drawAim() {
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
   ctx.lineWidth = 3;
   ctx.stroke();
+}
+
+function drawAim() {
+  if (!state.dragging || state.editor.enabled) return;
+  drawAimFromPull(state.pull.x, state.pull.y);
+}
+
+function drawTutorialAim() {
+  const pose = state.tutorial.pose;
+  if (!pose || !pose.showAim) return;
+  drawAimFromPull(pose.pullX, pose.pullY);
+}
+
+function drawTutorialPointer() {
+  const pose = state.tutorial.pose;
+  if (!pose || !pose.visible) return;
+
+  const size = state.ball.r * 2.5;
+  const half = size * 0.5;
+
+  ctx.save();
+  ctx.translate(pose.pointerX + 10, pose.pointerY + 10);
+  ctx.scale(pose.pointerScale, pose.pointerScale);
+
+  if (state.tutorialPointerVisual.isReady && state.tutorialPointerVisual.image) {
+    ctx.drawImage(
+      state.tutorialPointerVisual.image,
+      -half,
+      -half,
+      size,
+      size
+    );
+  } else {
+    ctx.beginPath();
+    ctx.arc(0, 0, Math.max(6, size * 0.2), 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.fill();
+  }
+
+  ctx.restore();
 }
 
 function drawDefaultGate(gate, opacity = 1) {
@@ -3192,7 +3470,9 @@ function drawScene(pulse = 0, pulseColor = '#ffffff') {
   drawSaws();
   drawHoles();
   drawAim();
+  drawTutorialAim();
   drawBall(pulse, pulseColor);
+  drawTutorialPointer();
   drawEditorOverlay();
 
   ctx.restore();
@@ -3801,6 +4081,14 @@ function handleEditorPointerUp() {
   }
 }
 
+function onAnyPointerDown(evt) {
+  markTutorialInteractionStart(evt?.pointerId);
+}
+
+function onAnyPointerUp(evt) {
+  markTutorialInteractionEnd(evt?.pointerId);
+}
+
 function onPointerDown(evt) {
   if (state.editor.enabled) {
     handleEditorPointerDown(evt);
@@ -3900,6 +4188,7 @@ function frame(timestamp) {
   state.sawVisual.angle = (state.sawVisual.angle + SAW_ROTATION_SPEED * deltaSeconds) % (Math.PI * 2);
 
   updatePhysics(dt);
+  updateTutorialState(timestamp);
   drawScene();
   requestAnimationFrame(frame);
 }
@@ -4053,6 +4342,9 @@ function bindUi() {
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointercancel', onPointerUp);
+  window.addEventListener('pointerdown', onAnyPointerDown, { passive: true });
+  window.addEventListener('pointerup', onAnyPointerUp, { passive: true });
+  window.addEventListener('pointercancel', onAnyPointerUp, { passive: true });
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('keydown', onGlobalKeyDown);
 
