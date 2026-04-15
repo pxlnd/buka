@@ -34,6 +34,28 @@ const EDITOR_GATE_OPACITY = 0.7;
 const DEFAULT_HOLE_RADIUS = 0.05;
 const MIN_HOLE_RADIUS = 0.01;
 const MAX_HOLE_RADIUS = 0.25;
+const DEFAULT_SAW_RADIUS = 0.05;
+const MIN_SAW_RADIUS = 0.01;
+const MAX_SAW_RADIUS = 0.25;
+const CHAINSAW_IMAGE_PATH = './images/chainsaw.png';
+const CHAINSAW_SHADOW_IMAGE_PATH = './images/chainsaw_shadow.png';
+const POINTER_IMAGE_PATH = './images/pointer.png';
+const SAW_ROTATION_SPEED = Math.PI * 1.2;
+const TUTORIAL_IDLE_DELAY_MS = 5000;
+const TUTORIAL_HOLD_MS = 650;
+const TUTORIAL_PRESS_MS = 280;
+const TUTORIAL_DRAG_MS = 860;
+const TUTORIAL_RELEASE_MS = 280;
+const TUTORIAL_PAUSE_MS = 420;
+const TUTORIAL_CYCLE_MS = (
+  TUTORIAL_HOLD_MS
+  + TUTORIAL_PRESS_MS
+  + TUTORIAL_DRAG_MS
+  + TUTORIAL_RELEASE_MS
+  + TUTORIAL_PAUSE_MS
+);
+const TUTORIAL_PULL_MIN = 10;
+const TUTORIAL_PULL_MAX = 60;
 
 const COLOR_TOKENS = {
   yellow: '#f6c531',
@@ -75,6 +97,7 @@ const restartBtn = document.getElementById('restartBtn');
 const backBtn = document.getElementById('backBtn');
 const loseOverlay = document.getElementById('loseOverlay');
 const loseRetryBtn = document.getElementById('loseRetryBtn');
+const stageLoader = document.getElementById('stageLoader');
 
 const debugCloseBtn = document.getElementById('debugCloseBtn');
 const debugPanel = document.getElementById('debugPanel');
@@ -104,6 +127,8 @@ const debugGateCount = document.getElementById('debugGateCount');
 const debugGateList = document.getElementById('debugGateList');
 const debugHoleRadius = document.getElementById('debugHoleRadius');
 const debugHoleList = document.getElementById('debugHoleList');
+const debugSawRadius = document.getElementById('debugSawRadius');
+const debugSawList = document.getElementById('debugSawList');
 const debugObstacleList = document.getElementById('debugObstacleList');
 const debugObstacleVertexList = document.getElementById('debugObstacleVertexList');
 const debugObstacleStartBtn = document.getElementById('debugObstacleStartBtn');
@@ -116,6 +141,8 @@ const state = {
   levels: [],
   levelIndex: 0,
   stageIndex: 0,
+  stageLoadToken: 0,
+  isStageLoading: false,
   stageLocked: false,
   shotUsed: false,
   commonSettings: {
@@ -136,8 +163,25 @@ const state = {
   },
   worldObstacles: [],
   worldHoles: [],
+  worldSaws: [],
   stageImage: {
     src: '',
+    image: null,
+    isReady: false
+  },
+  sawVisual: {
+    src: CHAINSAW_IMAGE_PATH,
+    image: null,
+    isReady: false,
+    angle: 0
+  },
+  sawShadowVisual: {
+    src: CHAINSAW_SHADOW_IMAGE_PATH,
+    image: null,
+    isReady: false
+  },
+  tutorialPointerVisual: {
+    src: POINTER_IMAGE_PATH,
     image: null,
     isReady: false
   },
@@ -154,6 +198,12 @@ const state = {
   },
   dragging: false,
   pull: { x: 0, y: 0 },
+  tutorial: {
+    active: false,
+    idleStartedAt: 0,
+    cycleStartedAt: 0,
+    pose: null
+  },
   lastTs: 0,
   dpr: 1,
   canvasRect: null,
@@ -169,10 +219,18 @@ const state = {
     selectedGateIndex: -1,
     dragHole: null,
     selectedHoleIndex: -1,
+    dragSaw: null,
+    selectedSawIndex: -1,
     isSaving: false,
     isSavingSettings: false
   }
 };
+
+const stageImageLoadCache = new Map();
+let sawImageLoadPromise = null;
+let sawShadowImageLoadPromise = null;
+let tutorialPointerImageLoadPromise = null;
+const activeTutorialPointers = new Set();
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -396,6 +454,7 @@ function makeBlankStage(levelNumber = 1, stageIndex = 0) {
     polygon: defaultPolygon(),
     gates: [],
     holes: [],
+    saws: [],
     obstacles: []
   };
 }
@@ -621,6 +680,24 @@ function normalizeHole(hole) {
   };
 }
 
+function normalizeSawRadius(value, fallback = DEFAULT_SAW_RADIUS) {
+  const parsed = Number(value);
+  const candidate = Number.isFinite(parsed) ? parsed : fallback;
+  return round(clamp(candidate, MIN_SAW_RADIUS, MAX_SAW_RADIUS), 4);
+}
+
+function normalizeSaw(saw) {
+  if (!saw || !Number.isFinite(Number(saw.x)) || !Number.isFinite(Number(saw.y))) {
+    return null;
+  }
+
+  return {
+    x: round(clamp(Number(saw.x), 0, 1)),
+    y: round(clamp(Number(saw.y), 0, 1)),
+    r: normalizeSawRadius(saw.r, DEFAULT_SAW_RADIUS)
+  };
+}
+
 function normalizeStart(start, polygon) {
   const candidate = {
     x: clamp(Number(start?.x) || 0.14, 0, 1),
@@ -657,6 +734,9 @@ function normalizeStage(stage, levelNumber = 1, stageIndex = 0) {
   const holes = Array.isArray(stage?.holes)
     ? stage.holes.map(normalizeHole).filter(Boolean)
     : [];
+  const saws = Array.isArray(stage?.saws)
+    ? stage.saws.map(normalizeSaw).filter(Boolean)
+    : [];
   const gateContext = gateNormalizationContext(polygon, obstacles);
 
   const gates = Array.isArray(stage?.gates)
@@ -670,6 +750,7 @@ function normalizeStage(stage, levelNumber = 1, stageIndex = 0) {
     polygon,
     gates,
     holes,
+    saws,
     obstacles
   };
 }
@@ -757,6 +838,11 @@ function serializeStage(stage, levelNumber, stageIndex) {
       x: round(hole.x),
       y: round(hole.y),
       r: normalizeHoleRadius(hole.r, DEFAULT_HOLE_RADIUS)
+    })),
+    saws: stage.saws.map((saw) => ({
+      x: round(saw.x),
+      y: round(saw.y),
+      r: normalizeSawRadius(saw.r, DEFAULT_SAW_RADIUS)
     })),
     obstacles: stage.obstacles.map((obstacle) => ({
       polygon: obstacle.polygon.map((point) => ({
@@ -935,40 +1021,401 @@ function currentStageImagePath(level = null, stage = null, stageIndex = state.st
   );
 }
 
-function syncCurrentStageImage() {
-  if (!state.levels.length) return;
+function setStageLoaderVisible(isVisible) {
+  if (!stageLoader) return;
+  stageLoader.hidden = !isVisible;
+}
+
+function preloadStageImage(path) {
+  const imagePath = normalizeStageImagePath(path, '');
+  if (!imagePath) {
+    return Promise.resolve({
+      path: imagePath,
+      image: null,
+      isReady: false
+    });
+  }
+
+  if (stageImageLoadCache.has(imagePath)) {
+    return stageImageLoadCache.get(imagePath);
+  }
+
+  const loadPromise = new Promise((resolve) => {
+    const image = new Image();
+    image.decoding = 'async';
+    let settled = false;
+
+    const finish = (isReady) => {
+      if (settled) return;
+      settled = true;
+      resolve({
+        path: imagePath,
+        image: isReady ? image : null,
+        isReady
+      });
+    };
+
+    image.onload = () => finish(true);
+    image.onerror = () => finish(false);
+
+    image.src = imagePath;
+    if (image.complete && image.naturalWidth > 0) {
+      finish(true);
+    }
+  }).then((result) => {
+    if (!result.isReady) {
+      stageImageLoadCache.delete(imagePath);
+    }
+    return result;
+  });
+
+  stageImageLoadCache.set(imagePath, loadPromise);
+  return loadPromise;
+}
+
+function ensureSawImageReady() {
+  if (state.sawVisual.isReady && state.sawVisual.image) {
+    return Promise.resolve(true);
+  }
+
+  if (sawImageLoadPromise) {
+    return sawImageLoadPromise;
+  }
+
+  sawImageLoadPromise = new Promise((resolve) => {
+    const image = new Image();
+    image.decoding = 'async';
+    let settled = false;
+
+    const finish = (isReady) => {
+      if (settled) return;
+      settled = true;
+
+      if (isReady) {
+        state.sawVisual.image = image;
+        state.sawVisual.isReady = true;
+      } else {
+        state.sawVisual.image = null;
+        state.sawVisual.isReady = false;
+      }
+
+      resolve(isReady);
+    };
+
+    image.onload = () => finish(true);
+    image.onerror = () => finish(false);
+
+    image.src = state.sawVisual.src;
+    if (image.complete && image.naturalWidth > 0) {
+      finish(true);
+    }
+  }).then((isReady) => {
+    if (!isReady) {
+      sawImageLoadPromise = null;
+    }
+    return isReady;
+  });
+
+  return sawImageLoadPromise;
+}
+
+function ensureSawShadowImageReady() {
+  if (state.sawShadowVisual.isReady && state.sawShadowVisual.image) {
+    return Promise.resolve(true);
+  }
+
+  if (sawShadowImageLoadPromise) {
+    return sawShadowImageLoadPromise;
+  }
+
+  sawShadowImageLoadPromise = new Promise((resolve) => {
+    const image = new Image();
+    image.decoding = 'async';
+    let settled = false;
+
+    const finish = (isReady) => {
+      if (settled) return;
+      settled = true;
+
+      if (isReady) {
+        state.sawShadowVisual.image = image;
+        state.sawShadowVisual.isReady = true;
+      } else {
+        state.sawShadowVisual.image = null;
+        state.sawShadowVisual.isReady = false;
+      }
+
+      resolve(isReady);
+    };
+
+    image.onload = () => finish(true);
+    image.onerror = () => finish(false);
+
+    image.src = state.sawShadowVisual.src;
+    if (image.complete && image.naturalWidth > 0) {
+      finish(true);
+    }
+  }).then((isReady) => {
+    if (!isReady) {
+      sawShadowImageLoadPromise = null;
+    }
+    return isReady;
+  });
+
+  return sawShadowImageLoadPromise;
+}
+
+function ensureTutorialPointerImageReady() {
+  if (state.tutorialPointerVisual.isReady && state.tutorialPointerVisual.image) {
+    return Promise.resolve(true);
+  }
+
+  if (tutorialPointerImageLoadPromise) {
+    return tutorialPointerImageLoadPromise;
+  }
+
+  tutorialPointerImageLoadPromise = new Promise((resolve) => {
+    const image = new Image();
+    image.decoding = 'async';
+    let settled = false;
+
+    const finish = (isReady) => {
+      if (settled) return;
+      settled = true;
+
+      if (isReady) {
+        state.tutorialPointerVisual.image = image;
+        state.tutorialPointerVisual.isReady = true;
+      } else {
+        state.tutorialPointerVisual.image = null;
+        state.tutorialPointerVisual.isReady = false;
+      }
+
+      resolve(isReady);
+    };
+
+    image.onload = () => finish(true);
+    image.onerror = () => finish(false);
+
+    image.src = state.tutorialPointerVisual.src;
+    if (image.complete && image.naturalWidth > 0) {
+      finish(true);
+    }
+  }).then((isReady) => {
+    if (!isReady) {
+      tutorialPointerImageLoadPromise = null;
+    }
+    return isReady;
+  });
+
+  return tutorialPointerImageLoadPromise;
+}
+
+function easeOutCubic(value) {
+  const t = clamp(value, 0, 1);
+  return 1 - (1 - t) ** 3;
+}
+
+function resetTutorialForCurrentStage(
+  now = performance.now(),
+  { showImmediately = false } = {}
+) {
+  activeTutorialPointers.clear();
+  state.tutorial.active = false;
+  state.tutorial.idleStartedAt = showImmediately
+    ? now - TUTORIAL_IDLE_DELAY_MS
+    : now;
+  state.tutorial.cycleStartedAt = now;
+  state.tutorial.pose = null;
+}
+
+function markTutorialInteractionStart(pointerId) {
+  const key = pointerId ?? 'default';
+  activeTutorialPointers.add(key);
+
+  state.tutorial.active = false;
+  state.tutorial.pose = null;
+}
+
+function markTutorialInteractionEnd(pointerId, now = performance.now()) {
+  const key = pointerId ?? 'default';
+  activeTutorialPointers.delete(key);
+  if (activeTutorialPointers.size > 0) return;
+
+  state.tutorial.active = false;
+  state.tutorial.idleStartedAt = now;
+  state.tutorial.cycleStartedAt = now;
+  state.tutorial.pose = null;
+}
+
+function computeTutorialPose(localMs) {
+  const ballX = state.ball.x;
+  const ballY = state.ball.y;
+  const baseX = ballX + state.ball.r * 0.18;
+  const baseY = ballY + state.ball.r * 0.1;
+  const holdEnd = TUTORIAL_HOLD_MS;
+  const pressEnd = holdEnd + TUTORIAL_PRESS_MS;
+  const dragEnd = pressEnd + TUTORIAL_DRAG_MS;
+  const releaseEnd = dragEnd + TUTORIAL_RELEASE_MS;
+
+  let pointerX = baseX;
+  let pointerY = baseY;
+  let pointerScale = 1;
+  let pullX = 0;
+  let pullY = 0;
+  let showAim = false;
+  let visible = true;
+
+  if (localMs < holdEnd) {
+    return {
+      visible,
+      pointerX,
+      pointerY,
+      pointerScale,
+      pullX,
+      pullY,
+      showAim
+    };
+  }
+
+  if (localMs < pressEnd) {
+    const t = easeOutCubic((localMs - holdEnd) / TUTORIAL_PRESS_MS);
+    pointerScale = 1 - 0.1 * t;
+    pullY = TUTORIAL_PULL_MIN * t;
+    showAim = true;
+    return {
+      visible,
+      pointerX,
+      pointerY,
+      pointerScale,
+      pullX,
+      pullY,
+      showAim
+    };
+  }
+
+  if (localMs < dragEnd) {
+    const t = easeOutCubic((localMs - pressEnd) / TUTORIAL_DRAG_MS);
+    pointerScale = 0.9;
+    pullY = TUTORIAL_PULL_MIN + (TUTORIAL_PULL_MAX - TUTORIAL_PULL_MIN) * t;
+    pointerY = baseY + pullY;
+    showAim = true;
+    return {
+      visible,
+      pointerX,
+      pointerY,
+      pointerScale,
+      pullX,
+      pullY,
+      showAim
+    };
+  }
+
+  if (localMs < releaseEnd) {
+    const t = clamp((localMs - dragEnd) / TUTORIAL_RELEASE_MS, 0, 1);
+    pointerScale = 0.9 + 0.1 * t;
+    pullY = TUTORIAL_PULL_MAX * (1 - t);
+    pointerY = baseY + TUTORIAL_PULL_MAX * (1 - t);
+    showAim = pullY > 2;
+    return {
+      visible,
+      pointerX,
+      pointerY,
+      pointerScale,
+      pullX,
+      pullY,
+      showAim
+    };
+  }
+
+  visible = false;
+  return {
+    visible,
+    pointerX,
+    pointerY,
+    pointerScale,
+    pullX,
+    pullY,
+    showAim
+  };
+}
+
+function updateTutorialState(timestamp) {
+  state.tutorial.pose = null;
+
+  if (
+    state.editor.enabled
+    || state.isStageLoading
+    || state.stageLocked
+    || state.ball.moving
+    || state.dragging
+    || state.shotUsed
+    || activeTutorialPointers.size > 0
+  ) {
+    return;
+  }
+
+  if (!state.tutorial.active) {
+    if (timestamp - state.tutorial.idleStartedAt < TUTORIAL_IDLE_DELAY_MS) {
+      return;
+    }
+    state.tutorial.active = true;
+    state.tutorial.cycleStartedAt = timestamp;
+  }
+
+  const elapsed = timestamp - state.tutorial.cycleStartedAt;
+  const localMs = elapsed % TUTORIAL_CYCLE_MS;
+  state.tutorial.pose = computeTutorialPose(localMs);
+}
+
+async function syncCurrentStageImage({ preloadLevel = false } = {}) {
+  if (!state.levels.length) return null;
 
   const level = currentLevel();
   const stage = currentStage();
   const imagePath = currentStageImagePath(level, stage, state.stageIndex);
   stage.image = imagePath;
 
-  if (state.stageImage.src === imagePath && state.stageImage.image) return;
-
   state.stageImage.src = imagePath;
   state.stageImage.image = null;
   state.stageImage.isReady = false;
 
-  const image = new Image();
-  image.decoding = 'async';
+  const loadPaths = preloadLevel
+    ? Array.from(new Set(level.stages.map((entry, index) => currentStageImagePath(level, entry, index))))
+    : [imagePath];
 
-  image.onload = () => {
-    if (state.stageImage.src !== imagePath) return;
-    state.stageImage.image = image;
-    state.stageImage.isReady = true;
-  };
+  const results = await Promise.all(loadPaths.map(preloadStageImage));
+  const currentImage = results.find((item) => item.path === imagePath)
+    || await preloadStageImage(imagePath);
 
-  image.onerror = () => {
-    if (state.stageImage.src !== imagePath) return;
-    state.stageImage.image = null;
-    state.stageImage.isReady = false;
-  };
+  if (state.stageImage.src !== imagePath) return currentImage;
 
-  image.src = imagePath;
+  state.stageImage.image = currentImage.isReady ? currentImage.image : null;
+  state.stageImage.isReady = currentImage.isReady;
+  return currentImage;
+}
 
-  if (image.complete && image.naturalWidth > 0) {
-    state.stageImage.image = image;
-    state.stageImage.isReady = true;
+async function completeStageLoad(token) {
+  try {
+    await Promise.all([
+      syncCurrentStageImage({ preloadLevel: true }),
+      ensureSawImageReady(),
+      ensureSawShadowImageReady(),
+      ensureTutorialPointerImageReady()
+    ]);
+  } finally {
+    if (token !== state.stageLoadToken) return;
+    syncBallWithStage();
+    const shouldShowTutorialImmediately = (
+      Number(currentLevel()?.number) === 1
+      && state.stageIndex === 0
+    );
+    resetTutorialForCurrentStage(performance.now(), {
+      showImmediately: shouldShowTutorialImmediately
+    });
+    state.isStageLoading = false;
+    setStageLoaderVisible(false);
+    state.stageLocked = false;
   }
 }
 
@@ -977,6 +1424,7 @@ function ensureCurrentStageShape() {
   stage.polygon = normalizePolygon(stage.polygon);
   stage.obstacles = stage.obstacles.map(normalizeObstacle).filter(Boolean);
   stage.holes = stage.holes.map(normalizeHole).filter(Boolean);
+  stage.saws = stage.saws.map(normalizeSaw).filter(Boolean);
   normalizeStageGates(stage);
   stage.start = normalizeStart(stage.start, stage.polygon);
 }
@@ -1151,6 +1599,19 @@ function rebuildWorldHoles() {
     x: state.arena.x + hole.x * state.arena.w,
     y: state.arena.y + hole.y * state.arena.h,
     r: Math.max(2, hole.r * scale)
+  }));
+}
+
+function rebuildWorldSaws() {
+  const stage = currentStage();
+  stage.saws = stage.saws.map(normalizeSaw).filter(Boolean);
+
+  const scale = Math.min(state.arena.w, state.arena.h);
+  state.worldSaws = stage.saws.map((saw, index) => ({
+    index,
+    x: state.arena.x + saw.x * state.arena.w,
+    y: state.arena.y + saw.y * state.arena.h,
+    r: Math.max(2, saw.r * scale)
   }));
 }
 
@@ -1575,6 +2036,113 @@ function dragSelectedHole(normalized) {
   state.editor.selectedHoleIndex = drag.holeIndex;
 }
 
+function findNearestSaw(point, maxDistance = 18) {
+  let best = null;
+  let bestDistance = maxDistance;
+
+  state.worldSaws.forEach((saw) => {
+    const distance = Math.hypot(point.x - saw.x, point.y - saw.y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = {
+        sawIndex: saw.index,
+        distance
+      };
+    }
+  });
+
+  return best;
+}
+
+function removeSawByIndex(index) {
+  const stage = currentStage();
+  if (!Number.isInteger(index) || index < 0 || index >= stage.saws.length) {
+    return false;
+  }
+
+  stage.saws.splice(index, 1);
+  rebuildWorldSaws();
+
+  if (state.editor.selectedSawIndex === index) {
+    state.editor.selectedSawIndex = -1;
+  } else if (state.editor.selectedSawIndex > index) {
+    state.editor.selectedSawIndex -= 1;
+  }
+
+  if (state.editor.dragSaw?.sawIndex === index) {
+    state.editor.dragSaw = null;
+  } else if (state.editor.dragSaw?.sawIndex > index) {
+    state.editor.dragSaw.sawIndex -= 1;
+  }
+
+  return true;
+}
+
+function setSelectedSaw(index) {
+  const stage = currentStage();
+  if (!Number.isInteger(index) || index < 0 || index >= stage.saws.length) {
+    state.editor.selectedSawIndex = -1;
+    state.editor.dragSaw = null;
+    renderDebugLists();
+    return false;
+  }
+
+  state.editor.selectedSawIndex = index;
+  state.editor.dragSaw = null;
+  debugSawRadius.value = formatDecimal(stage.saws[index].r, 3);
+  renderDebugLists();
+  return true;
+}
+
+function applySelectedSawRadiusFromInput() {
+  const stage = currentStage();
+  const sawIndex = state.editor.selectedSawIndex;
+  if (!Number.isInteger(sawIndex) || sawIndex < 0 || sawIndex >= stage.saws.length) {
+    return false;
+  }
+
+  stage.saws[sawIndex].r = normalizeSawRadius(
+    debugSawRadius.value,
+    stage.saws[sawIndex].r
+  );
+  debugSawRadius.value = formatDecimal(stage.saws[sawIndex].r, 3);
+  rebuildWorldSaws();
+  renderDebugLists();
+  return true;
+}
+
+function addSawAtPoint(normalized) {
+  const stage = currentStage();
+  const saw = normalizeSaw({
+    x: normalized.x,
+    y: normalized.y,
+    r: debugSawRadius.value
+  });
+  if (!saw) return false;
+
+  stage.saws.push(saw);
+  state.editor.selectedSawIndex = stage.saws.length - 1;
+  debugSawRadius.value = formatDecimal(saw.r, 3);
+  rebuildWorldSaws();
+  renderDebugLists();
+  return true;
+}
+
+function dragSelectedSaw(normalized) {
+  const drag = state.editor.dragSaw;
+  if (!drag) return;
+
+  const stage = currentStage();
+  const saw = stage.saws[drag.sawIndex];
+  if (!saw) return;
+
+  saw.x = round(clamp(normalized.x, 0, 1));
+  saw.y = round(clamp(normalized.y, 0, 1));
+  stage.saws[drag.sawIndex] = normalizeSaw(saw);
+  rebuildWorldSaws();
+  state.editor.selectedSawIndex = drag.sawIndex;
+}
+
 function findNearestObstacleVertex(point, maxDistance = 14) {
   let hit = null;
   let bestDistance = maxDistance;
@@ -1704,7 +2272,7 @@ function updateCurrentStageImageFromInputs() {
 
   stage.image = normalizeStageImagePath(rawImagePath, fallback);
   debugStageImage.value = stage.image;
-  syncCurrentStageImage();
+  void syncCurrentStageImage();
   return true;
 }
 
@@ -1791,6 +2359,13 @@ function renderDebugLists() {
     || state.editor.selectedHoleIndex >= stage.holes.length
   ) {
     state.editor.selectedHoleIndex = -1;
+  }
+
+  if (
+    state.editor.selectedSawIndex < 0
+    || state.editor.selectedSawIndex >= stage.saws.length
+  ) {
+    state.editor.selectedSawIndex = -1;
   }
 
   syncGateEdgeOptions();
@@ -1885,6 +2460,49 @@ function renderDebugLists() {
   } else {
     debugHoleRadius.value = formatDecimal(
       normalizeHoleRadius(debugHoleRadius.value, DEFAULT_HOLE_RADIUS),
+      3
+    );
+  }
+
+  debugSawList.innerHTML = '';
+  if (!stage.saws.length) {
+    const li = document.createElement('li');
+    li.className = 'list-empty';
+    li.textContent = 'Пил нет';
+    debugSawList.appendChild(li);
+  } else {
+    stage.saws.forEach((saw, index) => {
+      const li = document.createElement('li');
+      const text = document.createElement('span');
+      const selected = index === state.editor.selectedSawIndex;
+      text.textContent = `${selected ? '● ' : ''}${index + 1}. x=${saw.x.toFixed(2)} y=${saw.y.toFixed(2)} r=${saw.r.toFixed(3)}`;
+
+      const buttons = document.createElement('span');
+      buttons.className = 'list-actions';
+
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.className = 'pick-btn';
+      editButton.dataset.sawSelect = String(index);
+      editButton.textContent = selected ? 'Выбрано' : 'Выбрать';
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'remove-btn';
+      removeButton.dataset.sawIndex = String(index);
+      removeButton.textContent = 'Удалить';
+
+      buttons.append(editButton, removeButton);
+      li.append(text, buttons);
+      debugSawList.appendChild(li);
+    });
+  }
+
+  if (state.editor.selectedSawIndex >= 0 && stage.saws[state.editor.selectedSawIndex]) {
+    debugSawRadius.value = formatDecimal(stage.saws[state.editor.selectedSawIndex].r, 3);
+  } else {
+    debugSawRadius.value = formatDecimal(
+      normalizeSawRadius(debugSawRadius.value, DEFAULT_SAW_RADIUS),
       3
     );
   }
@@ -2003,11 +2621,16 @@ function syncDebugPanel() {
 }
 
 function loadStage(levelIndex, stageIndex) {
+  const loadToken = state.stageLoadToken + 1;
+  state.stageLoadToken = loadToken;
+  state.isStageLoading = true;
+  setStageLoaderVisible(true);
+
   state.levelIndex = clamp(levelIndex, 0, state.levels.length - 1);
   state.stageIndex = clamp(stageIndex, 0, STAGES_PER_LEVEL - 1);
 
   ensureCurrentStageShape();
-  state.stageLocked = false;
+  state.stageLocked = true;
   state.shotUsed = false;
   state.dragging = false;
   state.pull.x = 0;
@@ -2018,19 +2641,22 @@ function loadStage(levelIndex, stageIndex) {
   state.editor.selectedGateIndex = -1;
   state.editor.dragHole = null;
   state.editor.selectedHoleIndex = -1;
+  state.editor.dragSaw = null;
+  state.editor.selectedSawIndex = -1;
   state.editor.draftObstacle = null;
   hideLoseOverlay();
 
   rebuildWorldPolygon();
   rebuildWorldObstacles();
   rebuildWorldHoles();
+  rebuildWorldSaws();
   syncBallWithStage();
   applyLevelVisualSettings(currentLevel());
-  syncCurrentStageImage();
   updateHeader();
   updateProgress();
   syncDebugPanel();
   renderDebugLists();
+  void completeStageLoad(loadToken);
 }
 
 function restartLevel() {
@@ -2146,6 +2772,18 @@ function handleHoleCollisions() {
     const distance = Math.hypot(state.ball.x - hole.x, state.ball.y - hole.y);
     if (distance <= hole.r) {
       onHoleCaptured(hole);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function handleSawCollisions() {
+  for (const saw of state.worldSaws) {
+    const distance = Math.hypot(state.ball.x - saw.x, state.ball.y - saw.y);
+    if (distance <= saw.r + state.ball.r) {
+      onStageFailed();
       return true;
     }
   }
@@ -2328,6 +2966,10 @@ function updatePhysics(dt) {
     handleObstacleCollisions();
     if (state.stageLocked) return;
 
+    if (handleSawCollisions()) {
+      return;
+    }
+
     if (handleHoleCollisions()) {
       return;
     }
@@ -2412,12 +3054,10 @@ function drawBall(pulse = 0, pulseColor = '#fff') {
   drawReferenceBall(pulse, pulseColor);
 }
 
-function drawAim() {
-  if (!state.dragging || state.editor.enabled) return;
-
+function drawAimFromPull(rawPullX, rawPullY) {
   const maxPull = 100;
-  const pullX = clamp(state.pull.x, -maxPull, maxPull);
-  const pullY = clamp(state.pull.y, -maxPull, maxPull);
+  const pullX = clamp(rawPullX, -maxPull, maxPull);
+  const pullY = clamp(rawPullY, -maxPull, maxPull);
   const distance = Math.min(Math.hypot(pullX, pullY), maxPull);
   if (distance < 2) return;
 
@@ -2451,6 +3091,46 @@ function drawAim() {
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
   ctx.lineWidth = 3;
   ctx.stroke();
+}
+
+function drawAim() {
+  if (!state.dragging || state.editor.enabled) return;
+  drawAimFromPull(state.pull.x, state.pull.y);
+}
+
+function drawTutorialAim() {
+  const pose = state.tutorial.pose;
+  if (!pose || !pose.showAim) return;
+  drawAimFromPull(pose.pullX, pose.pullY);
+}
+
+function drawTutorialPointer() {
+  const pose = state.tutorial.pose;
+  if (!pose || !pose.visible) return;
+
+  const size = state.ball.r * 2.5;
+  const half = size * 0.5;
+
+  ctx.save();
+  ctx.translate(pose.pointerX + 10, pose.pointerY + 10);
+  ctx.scale(pose.pointerScale, pose.pointerScale);
+
+  if (state.tutorialPointerVisual.isReady && state.tutorialPointerVisual.image) {
+    ctx.drawImage(
+      state.tutorialPointerVisual.image,
+      -half,
+      -half,
+      size,
+      size
+    );
+  } else {
+    ctx.beginPath();
+    ctx.arc(0, 0, Math.max(6, size * 0.2), 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.fill();
+  }
+
+  ctx.restore();
 }
 
 function drawDefaultGate(gate, opacity = 1) {
@@ -2504,6 +3184,56 @@ function drawHoles(opacity = 1) {
   }
 
   ctx.restore();
+}
+
+function drawSaws() {
+  if (!state.worldSaws.length) return;
+
+  const angle = state.sawVisual.angle;
+
+  for (const saw of state.worldSaws) {
+    if (state.sawShadowVisual.isReady && state.sawShadowVisual.image) {
+      const shadowOffsetY = saw.r * 0.18;
+      const shadowSize = saw.r * 2;
+
+      ctx.save();
+      ctx.translate(saw.x, saw.y + shadowOffsetY);
+      ctx.rotate(angle);
+      ctx.globalAlpha = 0.9;
+      ctx.drawImage(
+        state.sawShadowVisual.image,
+        -saw.r,
+        -saw.r,
+        shadowSize,
+        shadowSize
+      );
+      ctx.restore();
+    }
+
+    ctx.save();
+    ctx.translate(saw.x, saw.y);
+    ctx.rotate(angle);
+
+    if (state.sawVisual.isReady && state.sawVisual.image) {
+      const size = saw.r * 2;
+      ctx.drawImage(state.sawVisual.image, -saw.r, -saw.r, size, size);
+    } else {
+      ctx.beginPath();
+      ctx.arc(0, 0, saw.r, 0, Math.PI * 2);
+      ctx.fillStyle = '#d9dde6';
+      ctx.fill();
+      ctx.lineWidth = Math.max(1.8, saw.r * 0.12);
+      ctx.strokeStyle = '#98a1b0';
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(0, 0, Math.max(2, saw.r * 0.18), 0, Math.PI * 2);
+      ctx.fillStyle = '#6d7483';
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
 }
 
 function drawDefaultArena(points, opacity = 1) {
@@ -2638,6 +3368,22 @@ function drawEditorOverlay() {
     });
   }
 
+  if (state.editor.tool === 'saw' || state.editor.selectedSawIndex >= 0) {
+    state.worldSaws.forEach((saw, sawIndex) => {
+      const selected = sawIndex === state.editor.selectedSawIndex;
+      ctx.beginPath();
+      ctx.arc(saw.x, saw.y, saw.r + (selected ? 6 : 4), 0, Math.PI * 2);
+      ctx.lineWidth = selected ? 2.6 : 1.8;
+      ctx.strokeStyle = selected ? 'rgba(67, 222, 110, 0.95)' : 'rgba(255, 255, 255, 0.62)';
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(saw.x, saw.y, selected ? 3.5 : 2.8, 0, Math.PI * 2);
+      ctx.fillStyle = selected ? 'rgba(67, 222, 110, 0.95)' : 'rgba(255, 255, 255, 0.9)';
+      ctx.fill();
+    });
+  }
+
   const showObstacleHandles = state.editor.tool === 'obstacle';
   state.worldObstacles.forEach((obstacle, obstacleIndex) => {
     const selected = obstacleIndex === state.editor.selectedObstacleIndex;
@@ -2710,6 +3456,8 @@ function drawEditorOverlay() {
 
 function drawScene(pulse = 0, pulseColor = '#ffffff') {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (state.isStageLoading) return;
+
   ctx.save();
   ctx.scale(state.dpr, state.dpr);
 
@@ -2719,9 +3467,12 @@ function drawScene(pulse = 0, pulseColor = '#ffffff') {
     drawArena(EDITOR_ARENA_OPACITY);
     currentStage().gates.forEach((gate) => drawGate(gate, EDITOR_GATE_OPACITY));
   }
+  drawSaws();
   drawHoles();
   drawAim();
+  drawTutorialAim();
   drawBall(pulse, pulseColor);
+  drawTutorialPointer();
   drawEditorOverlay();
 
   ctx.restore();
@@ -2854,6 +3605,7 @@ function applyPolygonChange() {
   rebuildWorldPolygon();
   rebuildWorldObstacles();
   rebuildWorldHoles();
+  rebuildWorldSaws();
   syncBallWithStage();
   syncDebugPanel();
   renderDebugLists();
@@ -2928,6 +3680,14 @@ function removeAtPoint(point) {
     removeHoleByIndex(nearestHole.holeIndex);
     renderDebugLists();
     setDebugStatus('Дырка удалена.');
+    return;
+  }
+
+  const nearestSaw = findNearestSaw(point, 24);
+  if (nearestSaw) {
+    removeSawByIndex(nearestSaw.sawIndex);
+    renderDebugLists();
+    setDebugStatus('Пила удалена.');
     return;
   }
 
@@ -3133,6 +3893,21 @@ function handleEditorPointerDown(evt) {
     return;
   }
 
+  if (state.editor.tool === 'saw') {
+    const sawHit = findNearestSaw(point, 22);
+    if (sawHit) {
+      setSelectedSaw(sawHit.sawIndex);
+      state.editor.dragSaw = { sawIndex: sawHit.sawIndex };
+      setDebugStatus(`Перетаскивание пилы ${sawHit.sawIndex + 1}.`);
+      return;
+    }
+
+    if (addSawAtPoint(normalized)) {
+      setDebugStatus('Пила добавлена. Перетаскивайте её или меняйте радиус в панели.');
+    }
+    return;
+  }
+
   if (state.editor.tool === 'gate') {
     const gateHit = findNearestGate(point, 22);
     if (gateHit) {
@@ -3252,6 +4027,11 @@ function handleEditorPointerMove(evt) {
     return;
   }
 
+  if (state.editor.tool === 'saw' && state.editor.dragSaw) {
+    dragSelectedSaw(normalized);
+    return;
+  }
+
   if (state.editor.tool === 'gate' && state.editor.dragGate) {
     dragSelectedGate(point);
   }
@@ -3281,6 +4061,16 @@ function handleEditorPointerUp() {
     return;
   }
 
+  if (state.editor.tool === 'saw' && state.editor.dragSaw) {
+    const sawIndex = state.editor.dragSaw.sawIndex;
+    state.editor.dragSaw = null;
+    renderDebugLists();
+    if (sawIndex >= 0) {
+      setDebugStatus(`Позиция пилы ${sawIndex + 1} обновлена.`);
+    }
+    return;
+  }
+
   if (state.editor.tool === 'gate' && state.editor.dragGate) {
     const gateIndex = state.editor.dragGate.gateIndex;
     state.editor.dragGate = null;
@@ -3289,6 +4079,14 @@ function handleEditorPointerUp() {
       setDebugStatus(`Позиция ворот ${gateIndex + 1} обновлена.`);
     }
   }
+}
+
+function onAnyPointerDown(evt) {
+  markTutorialInteractionStart(evt?.pointerId);
+}
+
+function onAnyPointerUp(evt) {
+  markTutorialInteractionEnd(evt?.pointerId);
 }
 
 function onPointerDown(evt) {
@@ -3373,6 +4171,7 @@ function resizeCanvas() {
     rebuildWorldPolygon();
     rebuildWorldObstacles();
     rebuildWorldHoles();
+    rebuildWorldSaws();
     if (!state.ball.moving && !state.dragging && !state.stageLocked) {
       syncBallWithStage();
     }
@@ -3385,8 +4184,11 @@ function frame(timestamp) {
   if (!state.lastTs) state.lastTs = timestamp;
   const dt = clamp((timestamp - state.lastTs) / 16.67, 0.5, 2.4);
   state.lastTs = timestamp;
+  const deltaSeconds = (dt * 16.67) / 1000;
+  state.sawVisual.angle = (state.sawVisual.angle + SAW_ROTATION_SPEED * deltaSeconds) % (Math.PI * 2);
 
   updatePhysics(dt);
+  updateTutorialState(timestamp);
   drawScene();
   requestAnimationFrame(frame);
 }
@@ -3407,12 +4209,16 @@ function setEditorTool(tool) {
   state.editor.dragObstacle = null;
   state.editor.dragGate = null;
   state.editor.dragHole = null;
+  state.editor.dragSaw = null;
   if (tool !== 'obstacle') {
     state.editor.draftObstacle = null;
     state.editor.selectedObstacleIndex = -1;
   }
   if (tool !== 'hole') {
     state.editor.selectedHoleIndex = -1;
+  }
+  if (tool !== 'saw') {
+    state.editor.selectedSawIndex = -1;
   }
   syncDebugPanel();
   renderDebugLists();
@@ -3536,6 +4342,9 @@ function bindUi() {
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointercancel', onPointerUp);
+  window.addEventListener('pointerdown', onAnyPointerDown, { passive: true });
+  window.addEventListener('pointerup', onAnyPointerUp, { passive: true });
+  window.addEventListener('pointercancel', onAnyPointerUp, { passive: true });
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('keydown', onGlobalKeyDown);
 
@@ -3556,6 +4365,8 @@ function bindUi() {
     state.editor.selectedGateIndex = -1;
     state.editor.dragHole = null;
     state.editor.selectedHoleIndex = -1;
+    state.editor.dragSaw = null;
+    state.editor.selectedSawIndex = -1;
 
     if (state.editor.enabled) {
       state.ball.vx = 0;
@@ -3708,6 +4519,20 @@ function bindUi() {
     setDebugStatus('Радиус выбранной дырки обновлен.');
   });
 
+  debugSawRadius.addEventListener('change', () => {
+    if (state.editor.selectedSawIndex < 0) {
+      debugSawRadius.value = formatDecimal(
+        normalizeSawRadius(debugSawRadius.value, DEFAULT_SAW_RADIUS),
+        3
+      );
+      setDebugStatus('Радиус применится к новым пилам.');
+      return;
+    }
+
+    if (!applySelectedSawRadiusFromInput()) return;
+    setDebugStatus('Радиус выбранной пилы обновлен.');
+  });
+
   debugResetPolygonBtn.addEventListener('click', () => {
     currentStage().polygon = defaultPolygon();
     applyPolygonChange();
@@ -3800,6 +4625,29 @@ function bindUi() {
     setEditorTool('hole');
     if (!setSelectedHole(index)) return;
     setDebugStatus(`Выбрана дырка ${index + 1}. Перетаскивайте на поле или меняйте радиус.`);
+  });
+
+  debugSawList.addEventListener('click', (event) => {
+    const removeButton = event.target.closest('button[data-saw-index]');
+    if (removeButton) {
+      const index = Number(removeButton.dataset.sawIndex);
+      if (!Number.isInteger(index)) return;
+
+      removeSawByIndex(index);
+      renderDebugLists();
+      setDebugStatus('Пила удалена.');
+      return;
+    }
+
+    const selectButton = event.target.closest('button[data-saw-select]');
+    if (!selectButton) return;
+
+    const index = Number(selectButton.dataset.sawSelect);
+    if (!Number.isInteger(index)) return;
+
+    setEditorTool('saw');
+    if (!setSelectedSaw(index)) return;
+    setDebugStatus(`Выбрана пила ${index + 1}. Перетаскивайте на поле или меняйте радиус.`);
   });
 
   debugObstacleList.addEventListener('click', (event) => {

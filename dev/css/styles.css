@@ -123,11 +123,14 @@ body {
 .progress-steps {
   position: relative;
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
 .step-dot {
+  position: relative;
+  flex: 0 0 auto;
   width: 36px;
   height: 36px;
   border-radius: 0;
@@ -136,14 +139,33 @@ body {
   transition: transform 0.2s ease, filter 0.2s ease;
 }
 
+.step-dot::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: 14px;
+  height: 11px;
+  transform: translateY(-50%);
+  background: url('../images/level_slot_connection.png') center / contain no-repeat;
+  pointer-events: none;
+}
+
+.step-dot:last-child::after {
+  display: none;
+}
+
 .step-dot.done {
   background-image: url('../images/level_slot_filled.png');
   transform: scale(0.98);
 }
 
+.step-dot.done::after {
+  background-image: url('../images/level_slot_connection_filled.png');
+}
+
 .step-dot.active {
-  transform: scale(1.06);
-  filter: drop-shadow(0 0 6px rgba(24, 180, 34, 0.35));
+  background-image: url('../images/level_slot_filled.png');
 }
 
 .board-card {
@@ -155,6 +177,7 @@ body {
   justify-self: center;
   margin-bottom: 50px;
   padding: 0px;
+  overflow: hidden;
 }
 
 #gameCanvas {
@@ -162,6 +185,26 @@ body {
   height: 100%;
   display: block;
   touch-action: none;
+}
+
+.stage-loader {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: #ffffff;
+  font-family: 'Open Sans', 'Trebuchet MS', sans-serif;
+  font-weight: 800;
+  font-size: clamp(20px, 5vw, 28px);
+  letter-spacing: 0.03em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  z-index: 5;
+  pointer-events: none;
+}
+
+.stage-loader[hidden] {
+  display: none;
 }
 
 .debug-panel {
@@ -453,6 +496,11 @@ body {
   .step-dot {
     width: 30px;
     height: 30px;
+  }
+
+  .step-dot::after {
+    width: 10px;
+    height: 8px;
   }
 
   .board-card {
