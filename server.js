@@ -12,16 +12,19 @@ const SETTINGS_DIR = path.join(__dirname, 'data', 'settings');
 const COMMON_SETTINGS_PATH = path.join(SETTINGS_DIR, 'game-settings.json');
 const DEFAULT_LEVEL_VISUALS = Object.freeze({
   background: '#DCE7FF',
-  field: '#8692FF'
+  field: '#8692FF',
+  aimArrow: '#FFFFFF'
 });
 const LEVEL_VISUAL_DEFAULTS = Object.freeze({
   1: Object.freeze({
     background: '#DCE7FF',
-    field: '#8692FF'
+    field: '#8692FF',
+    aimArrow: '#FFFFFF'
   }),
   2: Object.freeze({
     background: '#BC9AFB',
-    field: '#FFFFFF'
+    field: '#FFFFFF',
+    aimArrow: '#FFFFFF'
   })
 });
 const DEFAULT_COMMON_SETTINGS = Object.freeze({
@@ -123,6 +126,10 @@ function validateLevelPayload(body) {
     return 'Поле field должно быть в формате #RRGGBB.';
   }
 
+  if (body.aimArrow !== undefined && !isHexColor(body.aimArrow)) {
+    return 'Поле aimArrow должно быть в формате #RRGGBB.';
+  }
+
   return null;
 }
 
@@ -158,7 +165,8 @@ function defaultLevelVisualsForNumber(levelNumber) {
   const preset = LEVEL_VISUAL_DEFAULTS[key];
   return {
     background: normalizeHexColor(preset?.background, DEFAULT_LEVEL_VISUALS.background),
-    field: normalizeHexColor(preset?.field, DEFAULT_LEVEL_VISUALS.field)
+    field: normalizeHexColor(preset?.field, DEFAULT_LEVEL_VISUALS.field),
+    aimArrow: normalizeHexColor(preset?.aimArrow, DEFAULT_LEVEL_VISUALS.aimArrow)
   };
 }
 
@@ -166,7 +174,8 @@ function normalizeLevelVisuals(visuals, levelNumber) {
   const fallback = defaultLevelVisualsForNumber(levelNumber);
   return {
     background: normalizeHexColor(visuals?.background, fallback.background),
-    field: normalizeHexColor(visuals?.field, fallback.field)
+    field: normalizeHexColor(visuals?.field, fallback.field),
+    aimArrow: normalizeHexColor(visuals?.aimArrow, fallback.aimArrow)
   };
 }
 
@@ -329,6 +338,7 @@ app.put('/api/levels/:fileName', async (req, res) => {
     number: levelNumber,
     background: visuals.background,
     field: visuals.field,
+    aimArrow: visuals.aimArrow,
     stages: req.body.stages
   };
 
