@@ -2,16 +2,19 @@ const STAGES_PER_LEVEL = 5;
 const LIVES_PER_STAGE = 3;
 const DEFAULT_LEVEL_VISUALS = Object.freeze({
   background: '#DCE7FF',
-  field: '#8692FF'
+  field: '#8692FF',
+  aimArrow: '#FFFFFF'
 });
 const LEVEL_VISUAL_DEFAULTS = Object.freeze({
   1: Object.freeze({
     background: '#DCE7FF',
-    field: '#8692FF'
+    field: '#8692FF',
+    aimArrow: '#FFFFFF'
   }),
   2: Object.freeze({
     background: '#BC9AFB',
-    field: '#FFFFFF'
+    field: '#FFFFFF',
+    aimArrow: '#FFFFFF'
   })
 });
 const DEFAULT_COMMON_SETTINGS = Object.freeze({
@@ -44,6 +47,8 @@ const POINTER_IMAGE_PATH = './images/pointer.png';
 const SAW_ROTATION_SPEED = Math.PI * 1.2;
 const SAW_DEATH_ANIMATION_MS = 500;
 const SAW_DEATH_PARTICLE_CAP = 34;
+const VICTORY_ANIMATION_MS = 500;
+const VICTORY_PARTICLE_CAP = 100;
 const TUTORIAL_IDLE_DELAY_MS = 5000;
 const TUTORIAL_HOLD_MS = 650;
 const TUTORIAL_PRESS_MS = 280;
@@ -73,7 +78,7 @@ const BALL_OUTLINE_TOKENS = {
   yellow: '#F9FF90',
   red: '#AA000A',
   green: '#168B03',
-  blue: '#cbe8ff',
+  blue: '#0053C3',
   pink: '#BB0E9D',
   purple: '#7305BB'
 };
@@ -118,6 +123,7 @@ const debugBallBraking = document.getElementById('debugBallBraking');
 const debugBallRadiusRatio = document.getElementById('debugBallRadiusRatio');
 const debugBackgroundColor = document.getElementById('debugBackgroundColor');
 const debugFieldColor = document.getElementById('debugFieldColor');
+const debugAimArrowColor = document.getElementById('debugAimArrowColor');
 const debugStageImage = document.getElementById('debugStageImage');
 const debugSaveSettingsBtn = document.getElementById('debugSaveSettingsBtn');
 const debugToolRow = document.getElementById('debugToolRow');
@@ -162,7 +168,8 @@ const state = {
   },
   levelVisuals: {
     background: DEFAULT_LEVEL_VISUALS.background,
-    field: DEFAULT_LEVEL_VISUALS.field
+    field: DEFAULT_LEVEL_VISUALS.field,
+    aimArrow: DEFAULT_LEVEL_VISUALS.aimArrow
   },
   arena: { x: 16, y: 16, w: 328, h: 328 },
   worldPolygon: {
@@ -212,6 +219,13 @@ const state = {
     durationMs: SAW_DEATH_ANIMATION_MS,
     originX: 0,
     originY: 0,
+    particles: []
+  },
+  victory: {
+    active: false,
+    startedAt: 0,
+    durationMs: VICTORY_ANIMATION_MS,
+    ballAlpha: 1,
     particles: []
   },
   tutorial: {
@@ -277,12 +291,14 @@ function normalizeHexColor(value, fallback) {
 function normalizeLevelVisualSettings(rawVisuals, fallback = DEFAULT_LEVEL_VISUALS) {
   const safeFallback = {
     background: normalizeHexColor(fallback?.background, DEFAULT_LEVEL_VISUALS.background),
-    field: normalizeHexColor(fallback?.field, DEFAULT_LEVEL_VISUALS.field)
+    field: normalizeHexColor(fallback?.field, DEFAULT_LEVEL_VISUALS.field),
+    aimArrow: normalizeHexColor(fallback?.aimArrow, DEFAULT_LEVEL_VISUALS.aimArrow)
   };
 
   return {
     background: normalizeHexColor(rawVisuals?.background, safeFallback.background),
-    field: normalizeHexColor(rawVisuals?.field, safeFallback.field)
+    field: normalizeHexColor(rawVisuals?.field, safeFallback.field),
+    aimArrow: normalizeHexColor(rawVisuals?.aimArrow, safeFallback.aimArrow)
   };
 }
 
@@ -491,6 +507,7 @@ function makeBlankLevel(number) {
     number,
     fileName: fileNameForLevel(number),
     background: visuals.background,
+    aimArrow: visuals.aimArrow,
     field: visuals.field,
     stages: Array.from({ length: STAGES_PER_LEVEL }, (_, stageIndex) => makeBlankStage(number, stageIndex))
   };
@@ -814,7 +831,8 @@ function normalizeLevel(rawLevel, fileName = null) {
   const number = clamp(Number(rawLevel?.number) || fileNumber || 1, 1, 9999);
   const visuals = normalizeLevelVisualSettings({
     background: rawLevel?.background ?? rawLevel?.visuals?.background,
-    field: rawLevel?.field ?? rawLevel?.visuals?.field
+    field: rawLevel?.field ?? rawLevel?.visuals?.field,
+    aimArrow: rawLevel?.aimArrow ?? rawLevel?.visuals?.aimArrow
   }, defaultLevelVisualsForNumber(number));
 
   const sourceStages = Array.isArray(rawLevel?.stages) ? rawLevel.stages : [];
@@ -828,6 +846,7 @@ function normalizeLevel(rawLevel, fileName = null) {
     number,
     fileName: fileName || fileNameForLevel(number),
     background: visuals.background,
+    aimArrow: visuals.aimArrow,
     field: visuals.field,
     stages
   };
@@ -885,6 +904,7 @@ function serializeLevel(level) {
   return {
     number: level.number,
     background: visuals.background,
+    aimArrow: visuals.aimArrow,
     field: visuals.field,
     stages: level.stages.map((stage, stageIndex) => serializeStage(stage, level.number, stageIndex))
   };
@@ -1672,6 +1692,63 @@ function clearSawDeathAnimation() {
   state.sawDeath.particles = [];
 }
 
+function clearVictoryAnimation() {
+  state.victory.active = false;
+  state.victory.startedAt = 0;
+  state.victory.ballAlpha = 1;
+  state.victory.particles = [];
+  state.ball.renderScale = 1;
+}
+
+function beginVictoryAnimation(gate) {
+  const segment = gateSegment(gate);
+  const gateColor = colorValue(gate.color);
+  const particles = [];
+
+  if (segment) {
+    const gateLength = Math.hypot(segment.ex - segment.sx, segment.ey - segment.sy);
+    const particleCount = clamp(Math.round(gateLength / 2.0), 14, VICTORY_PARTICLE_CAP);
+    const tx = Number.isFinite(segment.tx) ? segment.tx : 0;
+    const ty = Number.isFinite(segment.ty) ? segment.ty : 0;
+    const nx = Number.isFinite(segment.nx) ? segment.nx : 0;
+    const ny = Number.isFinite(segment.ny) ? segment.ny : 0;
+
+    for (let i = 0; i < particleCount; i += 1) {
+      const spread = Math.random();
+      const tangentShift = (Math.random() - 0.5) * 6;
+      const x = segment.sx + (segment.ex - segment.sx) * spread + tx * tangentShift;
+      const y = segment.sy + (segment.ey - segment.sy) * spread + ty * tangentShift;
+      const outwardSpeed = state.ball.r * (4 + Math.random() * 5.6);
+      const sideSpeed = (Math.random() - 0.5) * state.ball.r * 6.4;
+      const size = Math.max(1.5, state.ball.r * (0.12 + Math.random() * 0.22));
+      const shade = Math.round(-22 + Math.random() * 56);
+      const glow = Math.round(26 + Math.random() * 64);
+
+      particles.push({
+        x,
+        y,
+        vx: nx * outwardSpeed + tx * sideSpeed,
+        vy: ny * outwardSpeed + ty * sideSpeed,
+        gravity: state.ball.r * (6 + Math.random() * 13),
+        delayMs: Math.random() * 70,
+        size,
+        alpha: 0.55 + Math.random() * 0.45,
+        angle: Math.random() * Math.PI * 2,
+        spin: (Math.random() - 0.5) * 10.8,
+        color: shadeColor(gateColor, shade),
+        glowColor: shadeColor(gateColor, glow)
+      });
+    }
+  }
+
+  state.victory.active = true;
+  state.victory.startedAt = performance.now();
+  state.victory.durationMs = VICTORY_ANIMATION_MS;
+  state.victory.ballAlpha = 1;
+  state.victory.particles = particles;
+  state.ball.renderScale = 1;
+}
+
 function beginSawDeathAnimation() {
   const originX = state.ball.x;
   const originY = state.ball.y;
@@ -1724,6 +1801,23 @@ function updateSawDeathAnimation(timestamp) {
   state.ball.renderScale = 1;
   if (tryConsumeLifeAndReplayStage()) return;
   showLoseOverlay();
+}
+
+function updateVictoryAnimation(timestamp) {
+  if (!state.victory.active) return;
+
+  const duration = Math.max(1, state.victory.durationMs);
+  const elapsed = Math.max(0, timestamp - state.victory.startedAt);
+  const progress = clamp(elapsed / duration, 0, 1);
+  const eased = easeOutCubic(progress);
+
+  state.ball.renderScale = 1 + 0.1 * eased;
+  state.victory.ballAlpha = 1 - progress;
+
+  if (progress < 1) return;
+
+  clearVictoryAnimation();
+  nextStageOrLevel();
 }
 
 function gateSpan(gate) {
@@ -2376,20 +2470,24 @@ function updateCurrentLevelColorsFromInputs() {
   const currentVisuals = currentLevelVisualSettings(level);
   const rawBackground = String(debugBackgroundColor.value || '').trim();
   const rawField = String(debugFieldColor.value || '').trim();
+  const rawAimArrow = String(debugAimArrowColor.value || '').trim();
 
-  if (!isHexColor(rawBackground) || !isHexColor(rawField)) {
+  if (!isHexColor(rawBackground) || !isHexColor(rawField) || !isHexColor(rawAimArrow)) {
     debugBackgroundColor.value = currentVisuals.background;
     debugFieldColor.value = currentVisuals.field;
-    setDebugStatus('Цвета должны быть в формате #RRGGBB.', true);
+    debugAimArrowColor.value = currentVisuals.aimArrow;
+    setDebugStatus('Все цвета должны быть в формате #RRGGBB.', true);
     return false;
   }
 
   level.background = normalizeHexColor(rawBackground, currentVisuals.background);
   level.field = normalizeHexColor(rawField, currentVisuals.field);
+  level.aimArrow = normalizeHexColor(rawAimArrow, currentVisuals.aimArrow);
   applyLevelVisualSettings(level);
 
   debugBackgroundColor.value = level.background;
   debugFieldColor.value = level.field;
+  debugAimArrowColor.value = level.aimArrow;
   return true;
 }
 
@@ -2740,6 +2838,7 @@ function syncDebugPanel() {
   const visuals = currentLevelVisualSettings(level);
   debugBackgroundColor.value = visuals.background;
   debugFieldColor.value = visuals.field;
+  debugAimArrowColor.value = visuals.aimArrow;
   debugStageImage.value = currentStageImagePath(level, stage, state.stageIndex);
 
   if (!Object.keys(COLOR_TOKENS).includes(debugGateColor.value)) {
@@ -2783,6 +2882,7 @@ function loadStage(levelIndex, stageIndex, options = {}) {
   state.editor.selectedSawIndex = -1;
   state.editor.draftObstacle = null;
   clearSawDeathAnimation();
+  clearVictoryAnimation();
   syncLivesForStage({ preserveLives, forceRefill: forceRefillLives });
   hideLoseOverlay();
 
@@ -2830,28 +2930,15 @@ function onCorrectGate(gate) {
   if (state.stageLocked) return;
 
   state.stageLocked = true;
+  state.dragging = false;
+  state.pull.x = 0;
+  state.pull.y = 0;
   state.ball.moving = false;
   state.ball.vx = 0;
   state.ball.vy = 0;
-
-  const finishedColor = colorValue(gate.color);
-  const puffStart = performance.now();
-  const puffDuration = 340;
-
-  const puff = () => {
-    const now = performance.now();
-    const t = clamp((now - puffStart) / puffDuration, 0, 1);
-    drawScene(t, finishedColor);
-
-    if (t < 1) {
-      requestAnimationFrame(puff);
-      return;
-    }
-
-    nextStageOrLevel();
-  };
-
-  requestAnimationFrame(puff);
+  clearSawDeathAnimation();
+  clearVictoryAnimation();
+  beginVictoryAnimation(gate);
 }
 
 function onStageFailed() {
@@ -2859,6 +2946,7 @@ function onStageFailed() {
 
   state.stageLocked = true;
   clearSawDeathAnimation();
+  clearVictoryAnimation();
   state.dragging = false;
   state.pull.x = 0;
   state.pull.y = 0;
@@ -2874,6 +2962,7 @@ function onSawCaptured() {
   if (state.stageLocked) return;
 
   state.stageLocked = true;
+  clearVictoryAnimation();
   state.dragging = false;
   state.pull.x = 0;
   state.pull.y = 0;
@@ -2887,6 +2976,7 @@ function onHoleCaptured(hole) {
   if (state.stageLocked) return;
 
   state.stageLocked = true;
+  clearVictoryAnimation();
   state.dragging = false;
   state.pull.x = 0;
   state.pull.y = 0;
@@ -2948,26 +3038,22 @@ function handleSawCollisions() {
 }
 
 function handlePolygonCollisions() {
+  const points = state.worldPolygon.points;
   const edges = state.worldPolygon.edges;
+  if (points.length < 3 || !edges.length) return;
 
   for (let pass = 0; pass < 3; pass += 1) {
     let hadCollision = false;
 
-    for (const edge of edges) {
-      const closest = pointToSegment(
-        { x: state.ball.x, y: state.ball.y },
-        edge.a,
-        edge.b
-      );
+    const center = { x: state.ball.x, y: state.ball.y };
+    const closest = closestPointOnPolygonBoundary(center, points);
+    if (!closest) return;
 
-      const signed = (
-        (state.ball.x - closest.x) * edge.inx
-        + (state.ball.y - closest.y) * edge.iny
-      );
+    const inside = pointInPolygon(center, points);
+    if (inside && closest.dist >= state.ball.r) break;
 
-      if (signed >= state.ball.r) continue;
-
-      const gate = findGateHit(edge.index, closest.t);
+    if (!inside || closest.dist <= state.ball.r + 0.05) {
+      const gate = findGateHit(closest.edgeIndex, closest.t);
       if (gate) {
         const gateColor = colorValue(gate.color).toLowerCase();
         const ballColor = colorValue(state.ball.colorToken).toLowerCase();
@@ -2979,16 +3065,65 @@ function handlePolygonCollisions() {
         }
         return;
       }
-
-      const penetration = state.ball.r - signed + 0.05;
-      state.ball.x += edge.inx * penetration;
-      state.ball.y += edge.iny * penetration;
-
-      reflectByNormal(edge.inx, edge.iny);
-      hadCollision = true;
-
-      if (state.stageLocked) return;
     }
+
+    let nx = 0;
+    let ny = 0;
+    let penetration = 0;
+
+    if (closest.dist > 1e-5) {
+      const dx = (state.ball.x - closest.x) / closest.dist;
+      const dy = (state.ball.y - closest.y) / closest.dist;
+
+      if (inside) {
+        nx = dx;
+        ny = dy;
+        penetration = state.ball.r - closest.dist + 0.05;
+      } else {
+        nx = -dx;
+        ny = -dy;
+        penetration = state.ball.r + closest.dist + 0.05;
+      }
+    } else {
+      const edge = edges.find((entry) => entry.index === closest.edgeIndex);
+      if (edge) {
+        nx = edge.inx;
+        ny = edge.iny;
+      }
+
+      if (Math.hypot(nx, ny) < 1e-6) {
+        const edgeDx = closest.b.x - closest.a.x;
+        const edgeDy = closest.b.y - closest.a.y;
+        const edgeLen = Math.hypot(edgeDx, edgeDy);
+        if (edgeLen < 1e-5) continue;
+
+        const tx = edgeDx / edgeLen;
+        const ty = edgeDy / edgeLen;
+        let inx = -ty;
+        let iny = tx;
+        const probe = {
+          x: closest.x + inx * 4,
+          y: closest.y + iny * 4
+        };
+        if (!pointInPolygon(probe, points)) {
+          inx = -inx;
+          iny = -iny;
+        }
+
+        nx = inx;
+        ny = iny;
+      }
+
+      penetration = state.ball.r + 0.05;
+    }
+
+    state.ball.x += nx * penetration;
+    state.ball.y += ny * penetration;
+
+    reflectByNormal(nx, ny);
+    hadCollision = true;
+
+    if (state.stageLocked) return;
 
     if (!hadCollision) break;
   }
@@ -3158,20 +3293,33 @@ function shadeColor(hex, amount) {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
-function drawReferenceBall(pulse = 0, pulseColor = '#fff') {
+function hexToRgba(hex, alpha = 1) {
+  const normalized = normalizeHexColor(hex, DEFAULT_LEVEL_VISUALS.aimArrow);
+  const raw = normalized.replace('#', '');
+  const num = parseInt(raw, 16);
+  const r = (num >> 16) & 0xff;
+  const g = (num >> 8) & 0xff;
+  const b = num & 0xff;
+  return `rgba(${r}, ${g}, ${b}, ${clamp(Number(alpha) || 0, 0, 1)})`;
+}
+
+function drawReferenceBall(pulse = 0, pulseColor = '#fff', opacity = 1) {
   const scale = clamp(Number(state.ball.renderScale) || 1, 0.02, 1.2);
   const radius = state.ball.r * scale + pulse * 7;
-  const alpha = 1 - pulse;
+  const ringAlpha = 1 - pulse;
+  const alpha = clamp(Number(opacity) || 1, 0, 1);
+  if (alpha <= 0.001) return;
   const cx = state.ball.x;
   const cy = state.ball.y;
   const color = state.ball.color;
 
   ctx.save();
+  ctx.globalAlpha = alpha;
+
   ctx.beginPath();
   ctx.ellipse(cx, cy + radius * 0.5, radius * 1.04, radius * 0.9, 0, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(34, 63, 182, 0.45)';
   ctx.fill();
-  ctx.restore();
 
   ctx.beginPath();
   ctx.arc(cx, cy + radius * 0.16, radius * 1.07, 0, Math.PI * 2);
@@ -3200,10 +3348,12 @@ function drawReferenceBall(pulse = 0, pulseColor = '#fff') {
   if (pulse > 0) {
     ctx.beginPath();
     ctx.arc(cx, cy, state.ball.r * scale + pulse * 20, 0, Math.PI * 2);
-    ctx.strokeStyle = `${pulseColor}${Math.round(alpha * 210).toString(16).padStart(2, '0')}`;
+    ctx.strokeStyle = `${pulseColor}${Math.round(ringAlpha * 210).toString(16).padStart(2, '0')}`;
     ctx.lineWidth = 4;
     ctx.stroke();
   }
+
+  ctx.restore();
 }
 
 function drawSawDeathParticles() {
@@ -3243,9 +3393,45 @@ function drawSawDeathParticles() {
   ctx.restore();
 }
 
-function drawBall(pulse = 0, pulseColor = '#fff') {
+function drawVictoryParticles() {
+  if (!state.victory.active || !state.victory.particles.length) return;
+
+  const elapsed = Math.max(0, performance.now() - state.victory.startedAt);
+  const duration = Math.max(1, state.victory.durationMs);
+
+  ctx.save();
+
+  for (const particle of state.victory.particles) {
+    const localElapsed = Math.max(0, elapsed - particle.delayMs);
+    const progress = clamp(localElapsed / duration, 0, 1);
+    if (progress <= 0 || progress >= 1) continue;
+
+    const timeSec = localElapsed / 1000;
+    const px = particle.x + particle.vx * timeSec;
+    const py = particle.y + particle.vy * timeSec + 0.5 * particle.gravity * timeSec * timeSec;
+    const size = Math.max(0.8, particle.size * (1 - progress * 0.62));
+    const alpha = (1 - progress) * particle.alpha;
+    const glowSize = size * 1.48;
+
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(particle.angle + particle.spin * timeSec);
+    ctx.globalAlpha = alpha * 0.48;
+    ctx.fillStyle = particle.glowColor;
+    ctx.fillRect(-glowSize * 0.5, -glowSize * 0.5, glowSize, glowSize);
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = particle.color;
+    ctx.fillRect(-size * 0.5, -size * 0.5, size, size);
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+function drawBall(pulse = 0, pulseColor = '#fff', opacity = 1) {
   if (state.sawDeath.active) return;
-  drawReferenceBall(pulse, pulseColor);
+  drawReferenceBall(pulse, pulseColor, opacity);
 }
 
 function drawAimFromPull(rawPullX, rawPullY) {
@@ -3254,6 +3440,7 @@ function drawAimFromPull(rawPullX, rawPullY) {
   const pullY = clamp(rawPullY, -maxPull, maxPull);
   const distance = Math.min(Math.hypot(pullX, pullY), maxPull);
   if (distance < 2) return;
+  const aimColor = normalizeHexColor(state.levelVisuals?.aimArrow, DEFAULT_LEVEL_VISUALS.aimArrow);
 
   const dirX = -pullX / distance;
   const dirY = -pullY / distance;
@@ -3274,15 +3461,15 @@ function drawAimFromPull(rawPullX, rawPullY) {
   ctx.closePath();
 
   const glow = ctx.createLinearGradient(state.ball.x, state.ball.y, tipX, tipY);
-  glow.addColorStop(0, 'rgba(255, 255, 255, 0.56)');
-  glow.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
+  glow.addColorStop(0, hexToRgba(aimColor, 0.62));
+  glow.addColorStop(1, hexToRgba(aimColor, 0.08));
   ctx.fillStyle = glow;
   ctx.fill();
 
   ctx.beginPath();
   ctx.moveTo(state.ball.x, state.ball.y);
   ctx.lineTo(state.ball.x + pullX, state.ball.y + pullY);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+  ctx.strokeStyle = hexToRgba(aimColor, 0.78);
   ctx.lineWidth = 3;
   ctx.stroke();
 }
@@ -3664,9 +3851,14 @@ function drawScene(pulse = 0, pulseColor = '#ffffff') {
   drawSaws();
   drawHoles();
   drawSawDeathParticles();
+  drawVictoryParticles();
   drawAim();
   drawTutorialAim();
-  drawBall(pulse, pulseColor);
+  drawBall(
+    pulse,
+    pulseColor,
+    state.victory.active ? state.victory.ballAlpha : 1
+  );
   drawTutorialPointer();
   drawEditorOverlay();
 
@@ -4383,6 +4575,7 @@ function frame(timestamp) {
   state.sawVisual.angle = (state.sawVisual.angle + SAW_ROTATION_SPEED * deltaSeconds) % (Math.PI * 2);
 
   updateSawDeathAnimation(timestamp);
+  updateVictoryAnimation(timestamp);
   updatePhysics(dt);
   updateTutorialState(timestamp);
   drawScene();
@@ -4658,6 +4851,11 @@ function bindUi() {
   debugFieldColor.addEventListener('change', () => {
     if (!updateCurrentLevelColorsFromInputs()) return;
     setDebugStatus('Цвет игрового поля обновлен. Нажмите "Сохранить уровень в JSON".');
+  });
+
+  debugAimArrowColor.addEventListener('change', () => {
+    if (!updateCurrentLevelColorsFromInputs()) return;
+    setDebugStatus('Цвет стрелки направления обновлен. Нажмите "Сохранить уровень в JSON".');
   });
 
   debugStageImage.addEventListener('change', () => {
