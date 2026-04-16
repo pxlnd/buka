@@ -1,0 +1,158 @@
+{
+  "number": 3,
+  "background": "#FFE364",
+  "field": "#8692FF",
+  "aimArrow": "#FFFFFF",
+  "stages": [
+    {
+      "ballColor": "pink",
+      "start": {
+        "x": 0.2617,
+        "y": 0.7837
+      },
+      "image": "./images/level/lvl_3_1.png",
+      "polygon": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 1
+        },
+        {
+          "x": 0,
+          "y": 1
+        }
+      ],
+      "gates": [],
+      "holes": [],
+      "saws": [],
+      "obstacles": []
+    },
+    {
+      "ballColor": "purple",
+      "start": {
+        "x": 0.2792,
+        "y": 0.7595
+      },
+      "image": "./images/level/lvl_3_2.png",
+      "polygon": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 1
+        },
+        {
+          "x": 0,
+          "y": 1
+        }
+      ],
+      "gates": [],
+      "holes": [],
+      "saws": [],
+      "obstacles": []
+    },
+    {
+      "ballColor": "green",
+      "start": {
+        "x": 0.2777,
+        "y": 0.7728
+      },
+      "image": "./images/level/lvl_3_3.png",
+      "polygon": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 1
+        },
+        {
+          "x": 0,
+          "y": 1
+        }
+      ],
+      "gates": [],
+      "holes": [],
+      "saws": [],
+      "obstacles": []
+    },
+    {
+      "ballColor": "blue",
+      "start": {
+        "x": 0.2852,
+        "y": 0.7745
+      },
+      "image": "./images/level/lvl_3_4.png",
+      "polygon": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 1
+        },
+        {
+          "x": 0,
+          "y": 1
+        }
+      ],
+      "gates": [],
+      "holes": [],
+      "saws": [],
+      "obstacles": []
+    },
+    {
+      "ballColor": "red",
+      "start": {
+        "x": 0.2881,
+        "y": 0.7627
+      },
+      "image": "./images/level/lvl_3_5.png",
+      "polygon": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 0
+        },
+        {
+          "x": 1,
+          "y": 1
+        },
+        {
+          "x": 0,
+          "y": 1
+        }
+      ],
+      "gates": [],
+      "holes": [],
+      "saws": [],
+      "obstacles": []
+    }
+  ]
+}
