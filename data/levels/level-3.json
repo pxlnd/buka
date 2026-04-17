@@ -60,6 +60,20 @@
         }
       ],
       "holes": [],
+      "fans": [
+        {
+          "x": 0.4999,
+          "y": 0.3589,
+          "r": 0.17,
+          "blades": 2,
+          "direction": 1,
+          "autoSpin": false,
+          "spinSpeed": 0,
+          "damping": 0.001,
+          "impactResponse": 3,
+          "initialAngle": 0
+        }
+      ],
       "saws": [],
       "obstacles": []
     },
@@ -119,6 +133,20 @@
         }
       ],
       "holes": [],
+      "fans": [
+        {
+          "x": 0.4964,
+          "y": 0.6592,
+          "r": 0.17,
+          "blades": 2,
+          "direction": 1,
+          "autoSpin": false,
+          "spinSpeed": 0,
+          "damping": 0.001,
+          "impactResponse": 3,
+          "initialAngle": 90
+        }
+      ],
       "saws": [],
       "obstacles": []
     },
@@ -172,8 +200,51 @@
         }
       ],
       "holes": [],
+      "fans": [
+        {
+          "x": 0.4946,
+          "y": 0.3081,
+          "r": 0.15,
+          "blades": 3,
+          "direction": 1,
+          "autoSpin": true,
+          "spinSpeed": 3.7699,
+          "damping": 0.03,
+          "impactResponse": 3,
+          "initialAngle": 0
+        }
+      ],
       "saws": [],
-      "obstacles": []
+      "obstacles": [
+        {
+          "polygon": [
+            {
+              "x": 0.441,
+              "y": 0.839
+            },
+            {
+              "x": 0.4404,
+              "y": 0.4911
+            },
+            {
+              "x": 0.456,
+              "y": 0.4679
+            },
+            {
+              "x": 0.5081,
+              "y": 0.4664
+            },
+            {
+              "x": 0.5272,
+              "y": 0.4911
+            },
+            {
+              "x": 0.5288,
+              "y": 0.8345
+            }
+          ]
+        }
+      ]
     },
     {
       "ballColor": "blue",
@@ -236,8 +307,66 @@
           "r": 0.07
         }
       ],
+      "fans": [],
       "saws": [],
-      "obstacles": []
+      "obstacles": [
+        {
+          "polygon": [
+            {
+              "x": 0.732,
+              "y": 0.4432
+            },
+            {
+              "x": 0.5622,
+              "y": 0.4481
+            },
+            {
+              "x": 0.5379,
+              "y": 0.4627
+            },
+            {
+              "x": 0.5422,
+              "y": 0.5005
+            },
+            {
+              "x": 0.5665,
+              "y": 0.5208
+            },
+            {
+              "x": 0.7561,
+              "y": 0.5164
+            }
+          ]
+        },
+        {
+          "polygon": [
+            {
+              "x": 0.265,
+              "y": 0.4494
+            },
+            {
+              "x": 0.3214,
+              "y": 0.4501
+            },
+            {
+              "x": 0.344,
+              "y": 0.4675
+            },
+            {
+              "x": 0.3466,
+              "y": 0.4952
+            },
+            {
+              "x": 0.3266,
+              "y": 0.5133
+            },
+            {
+              "x": 0.2477,
+              "y": 0.5133
+            }
+          ]
+        }
+      ]
     },
     {
       "ballColor": "red",
@@ -294,8 +423,34 @@
           "color": "yellow"
         }
       ],
-      "holes": [],
-      "saws": [],
+      "holes": [
+        {
+          "x": 0.6838,
+          "y": 0.7508,
+          "r": 0.06
+        }
+      ],
+      "fans": [
+        {
+          "x": 0.4975,
+          "y": 0.3697,
+          "r": 0.16,
+          "blades": 2,
+          "direction": 1,
+          "autoSpin": true,
+          "spinSpeed": 1,
+          "damping": 0.03,
+          "impactResponse": 3,
+          "initialAngle": 0
+        }
+      ],
+      "saws": [
+        {
+          "x": 0.5012,
+          "y": 0.6025,
+          "r": 0.09
+        }
+      ],
       "obstacles": []
     }
   ]

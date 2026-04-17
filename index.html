@@ -133,6 +133,7 @@
       <div class="tool-row" id="debugToolRow">
         <button class="tool-btn is-active" data-tool="start" type="button">Старт</button>
         <button class="tool-btn" data-tool="hole" type="button">Дырка</button>
+        <button class="tool-btn" data-tool="fan" type="button">Вентилятор</button>
         <button class="tool-btn" data-tool="saw" type="button">Пила</button>
         <button class="tool-btn" data-tool="gate" type="button">Ворота</button>
         <button class="tool-btn" data-tool="polygon" type="button">Полигон</button>
@@ -195,6 +196,61 @@
         </label>
       </div>
       <ul class="debug-list" id="debugHoleList"></ul>
+    </div>
+
+    <div class="debug-section">
+      <h3>Вентиляторы этапа</h3>
+      <div class="debug-grid compact-grid">
+        <label class="debug-row">
+          <span>Радиус (0.01-0.25)</span>
+          <input id="debugFanRadius" type="number" min="0.01" max="0.25" step="0.01" value="0.08">
+        </label>
+        <label class="debug-row">
+          <span>Лопасти</span>
+          <select id="debugFanBlades">
+            <option value="2">2 лопасти</option>
+            <option value="3">3 лопасти</option>
+          </select>
+        </label>
+        <label class="debug-row">
+          <span>Направление</span>
+          <select id="debugFanDirection">
+            <option value="1">По часовой</option>
+            <option value="-1">Против часовой</option>
+          </select>
+        </label>
+        <label class="debug-row">
+          <span>Без обратного вращения</span>
+          <select id="debugFanOneWay">
+            <option value="0">Нет</option>
+            <option value="1">Да</option>
+          </select>
+        </label>
+        <label class="debug-row">
+          <span>Постоянное кручение</span>
+          <select id="debugFanAutoSpin">
+            <option value="0">Только от удара</option>
+            <option value="1">Постоянно</option>
+          </select>
+        </label>
+        <label class="debug-row">
+          <span>Скорость кручения (рад/с)</span>
+          <input id="debugFanSpinSpeed" type="number" min="0" max="16" step="0.1" value="0">
+        </label>
+        <label class="debug-row">
+          <span>Damping (0.001-0.3)</span>
+          <input id="debugFanDamping" type="number" min="0.001" max="0.3" step="0.001" value="0.03">
+        </label>
+        <label class="debug-row">
+          <span>Чувствительность удара (0.1-10)</span>
+          <input id="debugFanImpact" type="number" min="0.1" max="10" step="0.1" value="3">
+        </label>
+        <label class="debug-row">
+          <span>Начальный поворот (0-180°)</span>
+          <input id="debugFanInitialAngle" type="number" min="0" max="180" step="1" value="0">
+        </label>
+      </div>
+      <ul class="debug-list" id="debugFanList"></ul>
     </div>
 
     <div class="debug-section">
