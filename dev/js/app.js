@@ -38,6 +38,21 @@ const EDITOR_GATE_OPACITY = 0.7;
 const DEFAULT_HOLE_RADIUS = 0.05;
 const MIN_HOLE_RADIUS = 0.01;
 const MAX_HOLE_RADIUS = 0.25;
+const DEFAULT_FAN_RADIUS = 0.08;
+const MIN_FAN_RADIUS = 0.01;
+const MAX_FAN_RADIUS = 0.25;
+const DEFAULT_FAN_DAMPING = 0.03;
+const MIN_FAN_DAMPING = 0.001;
+const MAX_FAN_DAMPING = 0.3;
+const DEFAULT_FAN_IMPACT_RESPONSE = 3;
+const MIN_FAN_IMPACT_RESPONSE = 0.1;
+const MAX_FAN_IMPACT_RESPONSE = 10;
+const FAN_THREE_BLADE_BASE_SPEED = Math.PI * 1.2;
+const FAN_MAX_ANGULAR_SPEED = Math.PI * 5;
+const DEFAULT_FAN_SPIN_SPEED = FAN_THREE_BLADE_BASE_SPEED;
+const MIN_FAN_SPIN_SPEED = 0;
+const MAX_FAN_SPIN_SPEED = FAN_MAX_ANGULAR_SPEED;
+const PHYSICS_STEP_SECONDS = 16.67 / 1000;
 const DEFAULT_SAW_RADIUS = 0.05;
 const MIN_SAW_RADIUS = 0.01;
 const MAX_SAW_RADIUS = 0.25;
@@ -137,6 +152,16 @@ const debugGateCount = document.getElementById('debugGateCount');
 const debugGateList = document.getElementById('debugGateList');
 const debugHoleRadius = document.getElementById('debugHoleRadius');
 const debugHoleList = document.getElementById('debugHoleList');
+const debugFanRadius = document.getElementById('debugFanRadius');
+const debugFanBlades = document.getElementById('debugFanBlades');
+const debugFanDirection = document.getElementById('debugFanDirection');
+const debugFanOneWay = document.getElementById('debugFanOneWay');
+const debugFanAutoSpin = document.getElementById('debugFanAutoSpin');
+const debugFanSpinSpeed = document.getElementById('debugFanSpinSpeed');
+const debugFanDamping = document.getElementById('debugFanDamping');
+const debugFanImpact = document.getElementById('debugFanImpact');
+const debugFanInitialAngle = document.getElementById('debugFanInitialAngle');
+const debugFanList = document.getElementById('debugFanList');
 const debugSawRadius = document.getElementById('debugSawRadius');
 const debugSawList = document.getElementById('debugSawList');
 const debugObstacleList = document.getElementById('debugObstacleList');
@@ -178,6 +203,7 @@ const state = {
   },
   worldObstacles: [],
   worldHoles: [],
+  worldFans: [],
   worldSaws: [],
   stageImage: {
     src: '',
@@ -249,6 +275,8 @@ const state = {
     selectedGateIndex: -1,
     dragHole: null,
     selectedHoleIndex: -1,
+    dragFan: null,
+    selectedFanIndex: -1,
     dragSaw: null,
     selectedSawIndex: -1,
     isSaving: false,
@@ -269,6 +297,21 @@ function clamp(value, min, max) {
 function round(value, precision = 4) {
   const factor = 10 ** precision;
   return Math.round(value * factor) / factor;
+}
+
+function normalizeAngle(value) {
+  const fullTurn = Math.PI * 2;
+  const angle = Number(value) || 0;
+  const wrapped = angle % fullTurn;
+  return wrapped < 0 ? wrapped + fullTurn : wrapped;
+}
+
+function degreesToRadians(value) {
+  return (Number(value) || 0) * (Math.PI / 180);
+}
+
+function radiansToDegrees(value) {
+  return (Number(value) || 0) * (180 / Math.PI);
 }
 
 function clonePoints(points) {
@@ -496,6 +539,7 @@ function makeBlankStage(levelNumber = 1, stageIndex = 0) {
     polygon: defaultPolygon(),
     gates: [],
     holes: [],
+    fans: [],
     saws: [],
     obstacles: []
   };
@@ -723,6 +767,133 @@ function normalizeHole(hole) {
   };
 }
 
+function normalizeFanRadius(value, fallback = DEFAULT_FAN_RADIUS) {
+  const parsed = Number(value);
+  const candidate = Number.isFinite(parsed) ? parsed : fallback;
+  return round(clamp(candidate, MIN_FAN_RADIUS, MAX_FAN_RADIUS), 4);
+}
+
+function normalizeFanBlades(value, fallback = 2) {
+  const parsed = Math.round(Number(value));
+  if (parsed === 3) return 3;
+  if (parsed === 2) return 2;
+  return fallback === 3 ? 3 : 2;
+}
+
+function defaultFanSpinSpeedForBlades(blades) {
+  return normalizeFanBlades(blades, 2) === 3 ? DEFAULT_FAN_SPIN_SPEED : 0;
+}
+
+function normalizeFanDirection(value, fallback = 1) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (raw === 'ccw' || raw === '-1') return -1;
+  if (raw === 'cw' || raw === '1') return 1;
+
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed < 0) return -1;
+  return fallback < 0 ? -1 : 1;
+}
+
+function normalizeFanOneWay(value, fallback = false) {
+  if (typeof value === 'boolean') return value;
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') return true;
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+  return Boolean(fallback);
+}
+
+function normalizeFanAutoSpin(value, fallback = false) {
+  if (typeof value === 'boolean') return value;
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') return true;
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+  return Boolean(fallback);
+}
+
+function normalizeFanSpinSpeed(value, fallback = DEFAULT_FAN_SPIN_SPEED) {
+  const parsed = Number(value);
+  const candidate = Number.isFinite(parsed) ? Math.abs(parsed) : fallback;
+  return round(clamp(candidate, MIN_FAN_SPIN_SPEED, MAX_FAN_SPIN_SPEED), 4);
+}
+
+function normalizeFanDamping(value, fallback = DEFAULT_FAN_DAMPING) {
+  const parsed = Number(value);
+  const candidate = Number.isFinite(parsed) ? parsed : fallback;
+  return round(clamp(candidate, MIN_FAN_DAMPING, MAX_FAN_DAMPING), 4);
+}
+
+function normalizeFanImpactResponse(value, fallback = DEFAULT_FAN_IMPACT_RESPONSE) {
+  const parsed = Number(value);
+  const candidate = Number.isFinite(parsed) ? parsed : fallback;
+  return round(clamp(candidate, MIN_FAN_IMPACT_RESPONSE, MAX_FAN_IMPACT_RESPONSE), 3);
+}
+
+function normalizeFanInitialAngle(value, fallback = 0) {
+  const parsed = Number(value);
+  const candidate = Number.isFinite(parsed) ? parsed : fallback;
+  return round(clamp(candidate, 0, 180), 2);
+}
+
+function normalizeFanAngle(value, fallback = 0) {
+  const parsed = Number(value);
+  const candidate = Number.isFinite(parsed) ? parsed : fallback;
+  return round(normalizeAngle(candidate), 6);
+}
+
+function normalizeFan(fan) {
+  if (!fan || !Number.isFinite(Number(fan.x)) || !Number.isFinite(Number(fan.y))) {
+    return null;
+  }
+
+  const blades = normalizeFanBlades(fan.blades ?? fan.type ?? fan.bladeCount, 2);
+  const legacyBaseAngularVelocity = Number(fan.baseAngularVelocity);
+  const legacyDirectionFallback = Number.isFinite(legacyBaseAngularVelocity) && legacyBaseAngularVelocity < 0
+    ? -1
+    : 1;
+  const direction = normalizeFanDirection(fan.direction, legacyDirectionFallback);
+  const spinSpeed = normalizeFanSpinSpeed(
+    fan.spinSpeed ?? fan.baseSpeed ?? (
+      Number.isFinite(legacyBaseAngularVelocity)
+        ? Math.abs(legacyBaseAngularVelocity)
+        : undefined
+    ),
+    defaultFanSpinSpeedForBlades(blades)
+  );
+  const autoSpin = normalizeFanAutoSpin(
+    fan.autoSpin ?? fan.constantSpin ?? fan.constantRotation,
+    blades === 3 || spinSpeed > 0
+  );
+  const oneWay = normalizeFanOneWay(
+    fan.oneWay ?? fan.oneDirection ?? fan.lockDirection ?? fan.directionLock,
+    false
+  );
+  const fallbackInitialAngle = Number.isFinite(Number(fan?.angle))
+    ? radiansToDegrees(normalizeAngle(Number(fan.angle)))
+    : 0;
+  const initialAngle = normalizeFanInitialAngle(
+    fan.initialAngle ?? fan.initialAngleDeg,
+    fallbackInitialAngle
+  );
+
+  return {
+    x: round(clamp(Number(fan.x), 0, 1)),
+    y: round(clamp(Number(fan.y), 0, 1)),
+    r: normalizeFanRadius(fan.r, DEFAULT_FAN_RADIUS),
+    blades,
+    direction,
+    oneWay,
+    autoSpin,
+    spinSpeed,
+    damping: normalizeFanDamping(fan.damping, DEFAULT_FAN_DAMPING),
+    impactResponse: normalizeFanImpactResponse(
+      fan.impactResponse ?? fan.hitResponse,
+      DEFAULT_FAN_IMPACT_RESPONSE
+    ),
+    initialAngle,
+    angle: normalizeFanAngle(degreesToRadians(initialAngle), 0)
+  };
+}
+
 function normalizeSawRadius(value, fallback = DEFAULT_SAW_RADIUS) {
   const parsed = Number(value);
   const candidate = Number.isFinite(parsed) ? parsed : fallback;
@@ -777,6 +948,9 @@ function normalizeStage(stage, levelNumber = 1, stageIndex = 0) {
   const holes = Array.isArray(stage?.holes)
     ? stage.holes.map(normalizeHole).filter(Boolean)
     : [];
+  const fans = Array.isArray(stage?.fans)
+    ? stage.fans.map(normalizeFan).filter(Boolean)
+    : [];
   const saws = Array.isArray(stage?.saws)
     ? stage.saws.map(normalizeSaw).filter(Boolean)
     : [];
@@ -793,6 +967,7 @@ function normalizeStage(stage, levelNumber = 1, stageIndex = 0) {
     polygon,
     gates,
     holes,
+    fans,
     saws,
     obstacles
   };
@@ -883,6 +1058,31 @@ function serializeStage(stage, levelNumber, stageIndex) {
       x: round(hole.x),
       y: round(hole.y),
       r: normalizeHoleRadius(hole.r, DEFAULT_HOLE_RADIUS)
+    })),
+    fans: stage.fans.map((fan) => ({
+      x: round(fan.x),
+      y: round(fan.y),
+      r: normalizeFanRadius(fan.r, DEFAULT_FAN_RADIUS),
+      blades: normalizeFanBlades(fan.blades, 2),
+      direction: normalizeFanDirection(fan.direction, 1),
+      oneWay: normalizeFanOneWay(fan.oneWay, false),
+      autoSpin: normalizeFanAutoSpin(
+        fan.autoSpin,
+        normalizeFanBlades(fan.blades, 2) === 3
+      ),
+      spinSpeed: normalizeFanSpinSpeed(
+        fan.spinSpeed,
+        defaultFanSpinSpeedForBlades(fan.blades)
+      ),
+      damping: normalizeFanDamping(fan.damping, DEFAULT_FAN_DAMPING),
+      impactResponse: normalizeFanImpactResponse(
+        fan.impactResponse,
+        DEFAULT_FAN_IMPACT_RESPONSE
+      ),
+      initialAngle: normalizeFanInitialAngle(
+        fan.initialAngle,
+        radiansToDegrees(normalizeFanAngle(fan.angle, 0))
+      )
     })),
     saws: stage.saws.map((saw) => ({
       x: round(saw.x),
@@ -1470,6 +1670,7 @@ function ensureCurrentStageShape() {
   stage.polygon = normalizePolygon(stage.polygon);
   stage.obstacles = stage.obstacles.map(normalizeObstacle).filter(Boolean);
   stage.holes = stage.holes.map(normalizeHole).filter(Boolean);
+  stage.fans = stage.fans.map(normalizeFan).filter(Boolean);
   stage.saws = stage.saws.map(normalizeSaw).filter(Boolean);
   normalizeStageGates(stage);
   stage.start = normalizeStart(stage.start, stage.polygon);
@@ -1646,6 +1847,108 @@ function rebuildWorldHoles() {
     y: state.arena.y + hole.y * state.arena.h,
     r: Math.max(2, hole.r * scale)
   }));
+}
+
+function fanBaseAngularVelocity(fan) {
+  if (!fan) return 0;
+  const autoSpin = normalizeFanAutoSpin(fan.autoSpin, false);
+  if (!autoSpin) return 0;
+  const blades = normalizeFanBlades(fan.blades, 2);
+  const direction = normalizeFanDirection(fan.direction, 1);
+  const spinSpeed = normalizeFanSpinSpeed(
+    fan.spinSpeed,
+    defaultFanSpinSpeedForBlades(blades)
+  );
+  return spinSpeed * direction;
+}
+
+function applyFanDirectionLimit(fan, angularVelocity) {
+  const limitedBySpeed = clamp(
+    Number.isFinite(angularVelocity) ? angularVelocity : 0,
+    -FAN_MAX_ANGULAR_SPEED,
+    FAN_MAX_ANGULAR_SPEED
+  );
+  const oneWay = normalizeFanOneWay(fan?.oneWay, false);
+  if (!oneWay) return limitedBySpeed;
+
+  const direction = normalizeFanDirection(fan?.direction, 1);
+  return direction < 0
+    ? Math.min(0, limitedBySpeed)
+    : Math.max(0, limitedBySpeed);
+}
+
+function rebuildWorldFans({ preserveRuntime = false } = {}) {
+  const stage = currentStage();
+  stage.fans = stage.fans.map(normalizeFan).filter(Boolean);
+
+  const previousByIndex = new Map(
+    preserveRuntime
+      ? state.worldFans.map((fan) => [fan.index, fan])
+      : []
+  );
+
+  const scale = Math.min(state.arena.w, state.arena.h);
+  state.worldFans = stage.fans.map((fan, index) => {
+    const radius = Math.max(4, fan.r * scale);
+    const blades = normalizeFanBlades(fan.blades, 2);
+    const direction = normalizeFanDirection(fan.direction, 1);
+    const oneWay = normalizeFanOneWay(fan.oneWay, false);
+    const spinSpeed = normalizeFanSpinSpeed(
+      fan.spinSpeed,
+      defaultFanSpinSpeedForBlades(blades)
+    );
+    const autoSpin = normalizeFanAutoSpin(
+      fan.autoSpin,
+      blades === 3 || spinSpeed > 0
+    );
+    const damping = normalizeFanDamping(fan.damping, DEFAULT_FAN_DAMPING);
+    const impactResponse = normalizeFanImpactResponse(
+      fan.impactResponse,
+      DEFAULT_FAN_IMPACT_RESPONSE
+    );
+    const baseAngularVelocity = fanBaseAngularVelocity({
+      blades,
+      direction,
+      autoSpin,
+      spinSpeed
+    });
+    const previous = previousByIndex.get(index);
+    const angle = preserveRuntime && previous
+      ? normalizeAngle(previous.angle)
+      : normalizeFanAngle(fan.angle, 0);
+    const rawAngularVelocity = preserveRuntime && previous
+      ? Number(previous.angularVelocity) || baseAngularVelocity
+      : baseAngularVelocity;
+    const angularVelocity = applyFanDirectionLimit(
+      { direction, oneWay },
+      rawAngularVelocity
+    );
+    const bladeLength = radius * 0.98;
+    const bladeThickness = Math.max(5, radius * (blades === 2 ? 0.40 : 0.40));
+    const hubOuterRadius = Math.max(5, radius * 0.26);
+    const hubInnerRadius = Math.max(3, hubOuterRadius * 0.56);
+
+    return {
+      index,
+      x: state.arena.x + fan.x * state.arena.w,
+      y: state.arena.y + fan.y * state.arena.h,
+      r: radius,
+      blades,
+      direction,
+      oneWay,
+      autoSpin,
+      spinSpeed,
+      damping,
+      impactResponse,
+      angle,
+      angularVelocity,
+      baseAngularVelocity,
+      bladeLength,
+      bladeThickness,
+      hubOuterRadius,
+      hubInnerRadius
+    };
+  });
 }
 
 function rebuildWorldSaws() {
@@ -2218,6 +2521,246 @@ function dragSelectedHole(normalized) {
   state.editor.selectedHoleIndex = drag.holeIndex;
 }
 
+function normalizeFanDirectionInputValue(rawValue, fallback = 1) {
+  return normalizeFanDirection(rawValue, fallback) < 0 ? '-1' : '1';
+}
+
+function normalizeFanOneWayInputValue(rawValue, fallback = false) {
+  return normalizeFanOneWay(rawValue, fallback) ? '1' : '0';
+}
+
+function normalizeFanAutoSpinInputValue(rawValue, fallback = false) {
+  return normalizeFanAutoSpin(rawValue, fallback) ? '1' : '0';
+}
+
+function fanDirectionLabel(direction) {
+  return normalizeFanDirection(direction, 1) < 0 ? 'против часовой' : 'по часовой';
+}
+
+function syncFanSpinControlState() {
+  const blades = normalizeFanBlades(debugFanBlades.value, 2);
+  const spinSpeed = normalizeFanSpinSpeed(
+    debugFanSpinSpeed.value,
+    defaultFanSpinSpeedForBlades(blades)
+  );
+  const oneWay = normalizeFanOneWay(debugFanOneWay.value, false);
+  const autoSpin = normalizeFanAutoSpin(
+    debugFanAutoSpin.value,
+    blades === 3 || spinSpeed > 0
+  );
+  debugFanDirection.disabled = !(autoSpin || oneWay);
+  debugFanSpinSpeed.disabled = !autoSpin;
+}
+
+function findNearestFan(point, maxDistance = 18) {
+  let best = null;
+  let bestDistance = maxDistance;
+
+  state.worldFans.forEach((fan) => {
+    const distance = Math.hypot(point.x - fan.x, point.y - fan.y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = {
+        fanIndex: fan.index,
+        distance
+      };
+    }
+  });
+
+  return best;
+}
+
+function removeFanByIndex(index) {
+  const stage = currentStage();
+  if (!Number.isInteger(index) || index < 0 || index >= stage.fans.length) {
+    return false;
+  }
+
+  stage.fans.splice(index, 1);
+  rebuildWorldFans();
+
+  if (state.editor.selectedFanIndex === index) {
+    state.editor.selectedFanIndex = -1;
+  } else if (state.editor.selectedFanIndex > index) {
+    state.editor.selectedFanIndex -= 1;
+  }
+
+  if (state.editor.dragFan?.fanIndex === index) {
+    state.editor.dragFan = null;
+  } else if (state.editor.dragFan?.fanIndex > index) {
+    state.editor.dragFan.fanIndex -= 1;
+  }
+
+  return true;
+}
+
+function syncSelectedFanControls() {
+  const stage = currentStage();
+  const fan = stage.fans[state.editor.selectedFanIndex];
+  if (!fan) {
+    const blades = normalizeFanBlades(debugFanBlades.value, 2);
+    debugFanRadius.value = formatDecimal(
+      normalizeFanRadius(debugFanRadius.value, DEFAULT_FAN_RADIUS),
+      3
+    );
+    debugFanBlades.value = String(blades);
+    debugFanOneWay.value = normalizeFanOneWayInputValue(
+      debugFanOneWay.value,
+      false
+    );
+    debugFanAutoSpin.value = normalizeFanAutoSpinInputValue(
+      debugFanAutoSpin.value,
+      blades === 3
+    );
+    debugFanSpinSpeed.value = formatDecimal(
+      normalizeFanSpinSpeed(
+        debugFanSpinSpeed.value,
+        defaultFanSpinSpeedForBlades(blades)
+      ),
+      3
+    );
+    debugFanDirection.value = normalizeFanDirectionInputValue(debugFanDirection.value, 1);
+    debugFanDamping.value = formatDecimal(
+      normalizeFanDamping(debugFanDamping.value, DEFAULT_FAN_DAMPING),
+      4
+    );
+    debugFanImpact.value = formatDecimal(
+      normalizeFanImpactResponse(debugFanImpact.value, DEFAULT_FAN_IMPACT_RESPONSE),
+      3
+    );
+    debugFanInitialAngle.value = formatDecimal(
+      normalizeFanInitialAngle(debugFanInitialAngle.value, 0),
+      1
+    );
+    syncFanSpinControlState();
+    return;
+  }
+
+  const blades = normalizeFanBlades(fan.blades, 2);
+  const spinSpeed = normalizeFanSpinSpeed(
+    fan.spinSpeed,
+    defaultFanSpinSpeedForBlades(blades)
+  );
+  const oneWay = normalizeFanOneWay(fan.oneWay, false);
+  const autoSpin = normalizeFanAutoSpin(
+    fan.autoSpin,
+    blades === 3 || spinSpeed > 0
+  );
+  debugFanRadius.value = formatDecimal(fan.r, 3);
+  debugFanBlades.value = String(blades);
+  debugFanOneWay.value = normalizeFanOneWayInputValue(oneWay, false);
+  debugFanAutoSpin.value = normalizeFanAutoSpinInputValue(
+    autoSpin,
+    blades === 3 || spinSpeed > 0
+  );
+  debugFanSpinSpeed.value = formatDecimal(spinSpeed, 3);
+  debugFanDirection.value = normalizeFanDirectionInputValue(fan.direction, 1);
+  debugFanDamping.value = formatDecimal(fan.damping, 4);
+  debugFanImpact.value = formatDecimal(
+    normalizeFanImpactResponse(fan.impactResponse, DEFAULT_FAN_IMPACT_RESPONSE),
+    3
+  );
+  debugFanInitialAngle.value = formatDecimal(
+    normalizeFanInitialAngle(fan.initialAngle, radiansToDegrees(fan.angle)),
+    1
+  );
+  syncFanSpinControlState();
+}
+
+function setSelectedFan(index) {
+  const stage = currentStage();
+  if (!Number.isInteger(index) || index < 0 || index >= stage.fans.length) {
+    state.editor.selectedFanIndex = -1;
+    state.editor.dragFan = null;
+    syncSelectedFanControls();
+    renderDebugLists();
+    return false;
+  }
+
+  state.editor.selectedFanIndex = index;
+  state.editor.dragFan = null;
+  syncSelectedFanControls();
+  renderDebugLists();
+  return true;
+}
+
+function applySelectedFanFromControls({
+  useRadius = true,
+  useBlades = true,
+  useDirection = true,
+  useOneWay = true,
+  useAutoSpin = true,
+  useSpinSpeed = true,
+  useDamping = true,
+  useImpactResponse = true,
+  useInitialAngle = true
+} = {}) {
+  const stage = currentStage();
+  const fanIndex = state.editor.selectedFanIndex;
+  if (!Number.isInteger(fanIndex) || fanIndex < 0 || fanIndex >= stage.fans.length) {
+    return false;
+  }
+
+  const selected = stage.fans[fanIndex];
+  stage.fans[fanIndex] = normalizeFan({
+    ...selected,
+    r: useRadius ? debugFanRadius.value : selected.r,
+    blades: useBlades ? debugFanBlades.value : selected.blades,
+    direction: useDirection ? debugFanDirection.value : selected.direction,
+    oneWay: useOneWay ? debugFanOneWay.value : selected.oneWay,
+    autoSpin: useAutoSpin ? debugFanAutoSpin.value : selected.autoSpin,
+    spinSpeed: useSpinSpeed ? debugFanSpinSpeed.value : selected.spinSpeed,
+    damping: useDamping ? debugFanDamping.value : selected.damping,
+    impactResponse: useImpactResponse ? debugFanImpact.value : selected.impactResponse,
+    initialAngle: useInitialAngle ? debugFanInitialAngle.value : selected.initialAngle
+  });
+
+  rebuildWorldFans();
+  syncSelectedFanControls();
+  renderDebugLists();
+  return true;
+}
+
+function addFanAtPoint(normalized) {
+  const stage = currentStage();
+  const fan = normalizeFan({
+    x: normalized.x,
+    y: normalized.y,
+    r: debugFanRadius.value,
+    blades: debugFanBlades.value,
+    direction: debugFanDirection.value,
+    oneWay: debugFanOneWay.value,
+    autoSpin: debugFanAutoSpin.value,
+    spinSpeed: debugFanSpinSpeed.value,
+    damping: debugFanDamping.value,
+    impactResponse: debugFanImpact.value,
+    initialAngle: debugFanInitialAngle.value
+  });
+  if (!fan) return false;
+
+  stage.fans.push(fan);
+  state.editor.selectedFanIndex = stage.fans.length - 1;
+  syncSelectedFanControls();
+  rebuildWorldFans();
+  renderDebugLists();
+  return true;
+}
+
+function dragSelectedFan(normalized) {
+  const drag = state.editor.dragFan;
+  if (!drag) return;
+
+  const stage = currentStage();
+  const fan = stage.fans[drag.fanIndex];
+  if (!fan) return;
+
+  fan.x = round(clamp(normalized.x, 0, 1));
+  fan.y = round(clamp(normalized.y, 0, 1));
+  stage.fans[drag.fanIndex] = normalizeFan(fan);
+  rebuildWorldFans();
+  state.editor.selectedFanIndex = drag.fanIndex;
+}
+
 function findNearestSaw(point, maxDistance = 18) {
   let best = null;
   let bestDistance = maxDistance;
@@ -2597,6 +3140,13 @@ function renderDebugLists() {
   }
 
   if (
+    state.editor.selectedFanIndex < 0
+    || state.editor.selectedFanIndex >= stage.fans.length
+  ) {
+    state.editor.selectedFanIndex = -1;
+  }
+
+  if (
     state.editor.selectedSawIndex < 0
     || state.editor.selectedSawIndex >= stage.saws.length
   ) {
@@ -2605,6 +3155,7 @@ function renderDebugLists() {
 
   syncGateEdgeOptions();
   syncSelectedGateControls();
+  syncSelectedFanControls();
 
   debugVertexList.innerHTML = '';
   stage.polygon.forEach((vertex, index) => {
@@ -2698,6 +3249,130 @@ function renderDebugLists() {
       3
     );
   }
+
+  debugFanList.innerHTML = '';
+  if (!stage.fans.length) {
+    const li = document.createElement('li');
+    li.className = 'list-empty';
+    li.textContent = 'Вентиляторов нет';
+    debugFanList.appendChild(li);
+  } else {
+    stage.fans.forEach((fan, index) => {
+      const li = document.createElement('li');
+      const text = document.createElement('span');
+      const selected = index === state.editor.selectedFanIndex;
+      const blades = normalizeFanBlades(fan.blades, 2);
+      const spinSpeed = normalizeFanSpinSpeed(
+        fan.spinSpeed,
+        defaultFanSpinSpeedForBlades(blades)
+      );
+      const oneWay = normalizeFanOneWay(fan.oneWay, false);
+      const autoSpin = normalizeFanAutoSpin(
+        fan.autoSpin,
+        blades === 3 || spinSpeed > 0
+      );
+      const spinLabel = autoSpin
+        ? `${fanDirectionLabel(fan.direction)}, ${spinSpeed.toFixed(2)} рад/с`
+        : 'старт от удара';
+      const oneWayLabel = oneWay ? 'без обратного хода' : 'с реверсом';
+      const hit = normalizeFanImpactResponse(
+        fan.impactResponse,
+        DEFAULT_FAN_IMPACT_RESPONSE
+      );
+      const initialAngle = normalizeFanInitialAngle(
+        fan.initialAngle,
+        radiansToDegrees(fan.angle)
+      );
+      text.textContent = `${selected ? '● ' : ''}${index + 1}. x=${fan.x.toFixed(2)} y=${fan.y.toFixed(2)} r=${fan.r.toFixed(3)} | лопасти=${blades} | угол=${initialAngle.toFixed(1)}° | damping=${fan.damping.toFixed(3)} | чувств=${hit.toFixed(2)} | ${spinLabel} | ${oneWayLabel}`;
+
+      const buttons = document.createElement('span');
+      buttons.className = 'list-actions';
+
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.className = 'pick-btn';
+      editButton.dataset.fanSelect = String(index);
+      editButton.textContent = selected ? 'Выбрано' : 'Выбрать';
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'remove-btn';
+      removeButton.dataset.fanIndex = String(index);
+      removeButton.textContent = 'Удалить';
+
+      buttons.append(editButton, removeButton);
+      li.append(text, buttons);
+      debugFanList.appendChild(li);
+    });
+  }
+
+  if (state.editor.selectedFanIndex >= 0 && stage.fans[state.editor.selectedFanIndex]) {
+    const selectedFan = stage.fans[state.editor.selectedFanIndex];
+    const blades = normalizeFanBlades(selectedFan.blades, 2);
+    const spinSpeed = normalizeFanSpinSpeed(
+      selectedFan.spinSpeed,
+      defaultFanSpinSpeedForBlades(blades)
+    );
+    const oneWay = normalizeFanOneWay(selectedFan.oneWay, false);
+    const autoSpin = normalizeFanAutoSpin(
+      selectedFan.autoSpin,
+      blades === 3 || spinSpeed > 0
+    );
+    debugFanRadius.value = formatDecimal(selectedFan.r, 3);
+    debugFanBlades.value = String(blades);
+    debugFanOneWay.value = normalizeFanOneWayInputValue(oneWay, false);
+    debugFanAutoSpin.value = normalizeFanAutoSpinInputValue(
+      autoSpin,
+      blades === 3 || spinSpeed > 0
+    );
+    debugFanSpinSpeed.value = formatDecimal(spinSpeed, 3);
+    debugFanDirection.value = normalizeFanDirectionInputValue(selectedFan.direction, 1);
+    debugFanDamping.value = formatDecimal(selectedFan.damping, 4);
+    debugFanImpact.value = formatDecimal(
+      normalizeFanImpactResponse(selectedFan.impactResponse, DEFAULT_FAN_IMPACT_RESPONSE),
+      3
+    );
+    debugFanInitialAngle.value = formatDecimal(
+      normalizeFanInitialAngle(selectedFan.initialAngle, radiansToDegrees(selectedFan.angle)),
+      1
+    );
+  } else {
+    const blades = normalizeFanBlades(debugFanBlades.value, 2);
+    debugFanRadius.value = formatDecimal(
+      normalizeFanRadius(debugFanRadius.value, DEFAULT_FAN_RADIUS),
+      3
+    );
+    debugFanBlades.value = String(blades);
+    debugFanOneWay.value = normalizeFanOneWayInputValue(
+      debugFanOneWay.value,
+      false
+    );
+    debugFanAutoSpin.value = normalizeFanAutoSpinInputValue(
+      debugFanAutoSpin.value,
+      blades === 3
+    );
+    debugFanSpinSpeed.value = formatDecimal(
+      normalizeFanSpinSpeed(
+        debugFanSpinSpeed.value,
+        defaultFanSpinSpeedForBlades(blades)
+      ),
+      3
+    );
+    debugFanDirection.value = normalizeFanDirectionInputValue(debugFanDirection.value, 1);
+    debugFanDamping.value = formatDecimal(
+      normalizeFanDamping(debugFanDamping.value, DEFAULT_FAN_DAMPING),
+      4
+    );
+    debugFanImpact.value = formatDecimal(
+      normalizeFanImpactResponse(debugFanImpact.value, DEFAULT_FAN_IMPACT_RESPONSE),
+      3
+    );
+    debugFanInitialAngle.value = formatDecimal(
+      normalizeFanInitialAngle(debugFanInitialAngle.value, 0),
+      1
+    );
+  }
+  syncFanSpinControlState();
 
   debugSawList.innerHTML = '';
   if (!stage.saws.length) {
@@ -2854,6 +3529,7 @@ function syncDebugPanel() {
 
   syncGateEdgeOptions();
   syncSelectedGateControls();
+  syncSelectedFanControls();
 }
 
 function loadStage(levelIndex, stageIndex, options = {}) {
@@ -2878,6 +3554,8 @@ function loadStage(levelIndex, stageIndex, options = {}) {
   state.editor.selectedGateIndex = -1;
   state.editor.dragHole = null;
   state.editor.selectedHoleIndex = -1;
+  state.editor.dragFan = null;
+  state.editor.selectedFanIndex = -1;
   state.editor.dragSaw = null;
   state.editor.selectedSawIndex = -1;
   state.editor.draftObstacle = null;
@@ -2889,6 +3567,7 @@ function loadStage(levelIndex, stageIndex, options = {}) {
   rebuildWorldPolygon();
   rebuildWorldObstacles();
   rebuildWorldHoles();
+  rebuildWorldFans();
   rebuildWorldSaws();
   syncBallWithStage();
   applyLevelVisualSettings(currentLevel());
@@ -3011,6 +3690,206 @@ function onHoleCaptured(hole) {
   };
 
   requestAnimationFrame(tick);
+}
+
+function fanBladeSegment(fan, bladeIndex) {
+  const bladeStep = (Math.PI * 2) / Math.max(1, fan.blades);
+  const bladeAngle = fan.angle + bladeStep * bladeIndex;
+  const inner = fan.hubOuterRadius * 0.56;
+  const outer = fan.bladeLength;
+  const cos = Math.cos(bladeAngle);
+  const sin = Math.sin(bladeAngle);
+
+  return {
+    angle: bladeAngle,
+    sx: fan.x + cos * inner,
+    sy: fan.y + sin * inner,
+    ex: fan.x + cos * outer,
+    ey: fan.y + sin * outer
+  };
+}
+
+function fanSurfaceVelocity(fan, point) {
+  const rx = point.x - fan.x;
+  const ry = point.y - fan.y;
+  // Angular velocity is in rad/s, while ball velocity is in px per physics-step.
+  // Convert to matching units to avoid excessive collision response.
+  const tangentialPerSecond = fan.angularVelocity;
+  const toPhysicsStepUnits = PHYSICS_STEP_SECONDS;
+  return {
+    x: -ry * tangentialPerSecond * toPhysicsStepUnits,
+    y: rx * tangentialPerSecond * toPhysicsStepUnits
+  };
+}
+
+function addFanAngularImpulse(fan, point, ballImpulseX, ballImpulseY, impactSpeed) {
+  const rx = point.x - fan.x;
+  const ry = point.y - fan.y;
+  const arm = Math.hypot(rx, ry);
+  if (arm < fan.hubInnerRadius * 0.8) return;
+
+  const impulseMagnitude = Math.hypot(ballImpulseX, ballImpulseY);
+  if (impulseMagnitude < 1e-6) return;
+
+  // Torque on ball is r x J_ball, fan gets the opposite reaction torque.
+  const torqueOnBall = rx * ballImpulseY - ry * ballImpulseX;
+  const torqueOnFan = -torqueOnBall;
+  const inertia = Math.max(60, fan.r * fan.r * 0.7);
+  const impactResponse = normalizeFanImpactResponse(
+    fan.impactResponse,
+    DEFAULT_FAN_IMPACT_RESPONSE
+  );
+  const rawImpact = Math.max(0, impactSpeed);
+  // Lower exponent boosts response for weak hits while avoiding explosive growth on fast impacts.
+  const effectiveImpact = rawImpact > 0 ? rawImpact ** 0.55 : 0;
+
+  const gain = 1.2 + effectiveImpact * 2.2;
+  let delta = (torqueOnFan / inertia) * gain * impactResponse;
+  if (effectiveImpact > 0 && Math.abs(delta) < 0.0035 * impactResponse) {
+    delta = Math.sign(torqueOnFan || 1) * 0.0035 * impactResponse;
+  }
+  delta = clamp(delta, -Math.PI * 1.35, Math.PI * 1.35);
+
+  fan.angularVelocity = applyFanDirectionLimit(
+    fan,
+    fan.angularVelocity + delta
+  );
+}
+
+function reflectBallFromFanSurface(fan, contactPoint, nx, ny) {
+  const preBallVx = state.ball.vx;
+  const preBallVy = state.ball.vy;
+  const surface = fanSurfaceVelocity(fan, contactPoint);
+  let relVx = preBallVx - surface.x;
+  let relVy = preBallVy - surface.y;
+  const speedAlongNormal = relVx * nx + relVy * ny;
+
+  if (speedAlongNormal < 0) {
+    relVx -= 2 * speedAlongNormal * nx;
+    relVy -= 2 * speedAlongNormal * ny;
+  }
+
+  const tx = -ny;
+  const ty = nx;
+  const surfaceTangential = surface.x * tx + surface.y * ty;
+  relVx += tx * surfaceTangential * 0.1;
+  relVy += ty * surfaceTangential * 0.1;
+
+  state.ball.vx = (relVx + surface.x) * 0.992;
+  state.ball.vy = (relVy + surface.y) * 0.992;
+
+  const ballImpulseX = state.ball.vx - preBallVx;
+  const ballImpulseY = state.ball.vy - preBallVy;
+  addFanAngularImpulse(fan, contactPoint, ballImpulseX, ballImpulseY, -speedAlongNormal);
+}
+
+function resolveFanHubCollision(fan) {
+  const dx = state.ball.x - fan.x;
+  const dy = state.ball.y - fan.y;
+  const dist = Math.hypot(dx, dy);
+  const hubRadius = fan.hubOuterRadius * 0.85;
+  const minDist = state.ball.r + hubRadius;
+  if (dist >= minDist) return false;
+
+  let nx = 1;
+  let ny = 0;
+  if (dist > 1e-5) {
+    nx = dx / dist;
+    ny = dy / dist;
+  }
+
+  const penetration = minDist - dist + 0.06;
+  state.ball.x += nx * penetration;
+  state.ball.y += ny * penetration;
+
+  const contactPoint = {
+    x: fan.x + nx * hubRadius,
+    y: fan.y + ny * hubRadius
+  };
+
+  reflectBallFromFanSurface(fan, contactPoint, nx, ny);
+  return true;
+}
+
+function resolveFanBladeCollision(fan, blade) {
+  const closest = pointToSegment(
+    { x: state.ball.x, y: state.ball.y },
+    { x: blade.sx, y: blade.sy },
+    { x: blade.ex, y: blade.ey }
+  );
+  const bladeHalf = fan.bladeThickness * 0.5;
+  const minDist = state.ball.r + bladeHalf;
+  if (closest.dist >= minDist) return false;
+
+  let nx = 1;
+  let ny = 0;
+  if (closest.dist > 1e-5) {
+    nx = (state.ball.x - closest.x) / closest.dist;
+    ny = (state.ball.y - closest.y) / closest.dist;
+  } else {
+    const radialX = state.ball.x - fan.x;
+    const radialY = state.ball.y - fan.y;
+    const radialLen = Math.hypot(radialX, radialY);
+    if (radialLen > 1e-5) {
+      nx = radialX / radialLen;
+      ny = radialY / radialLen;
+    } else {
+      nx = Math.cos(blade.angle + Math.PI * 0.5);
+      ny = Math.sin(blade.angle + Math.PI * 0.5);
+    }
+  }
+
+  const penetration = minDist - closest.dist + 0.06;
+  state.ball.x += nx * penetration;
+  state.ball.y += ny * penetration;
+
+  const contactPoint = {
+    x: closest.x,
+    y: closest.y
+  };
+  reflectBallFromFanSurface(fan, contactPoint, nx, ny);
+  return true;
+}
+
+function handleFanCollisions() {
+  if (!state.worldFans.length) return false;
+  let hadAnyCollision = false;
+
+  for (let pass = 0; pass < 3; pass += 1) {
+    let hadCollision = false;
+
+    for (const fan of state.worldFans) {
+      if (resolveFanHubCollision(fan)) {
+        hadCollision = true;
+        hadAnyCollision = true;
+      }
+
+      for (let bladeIndex = 0; bladeIndex < fan.blades; bladeIndex += 1) {
+        const blade = fanBladeSegment(fan, bladeIndex);
+        if (!resolveFanBladeCollision(fan, blade)) continue;
+        hadCollision = true;
+        hadAnyCollision = true;
+        break;
+      }
+    }
+
+    if (!hadCollision) break;
+  }
+
+  return hadAnyCollision;
+}
+
+function updateFans(deltaSeconds) {
+  if (!state.worldFans.length) return;
+  const frameScale = Math.max(0, deltaSeconds * 60);
+
+  state.worldFans.forEach((fan) => {
+    const decay = Math.pow(clamp(1 - fan.damping, 0, 1), frameScale);
+    const nextAngularVelocity = fan.baseAngularVelocity
+      + (fan.angularVelocity - fan.baseAngularVelocity) * decay;
+    fan.angularVelocity = applyFanDirectionLimit(fan, nextAngularVelocity);
+    fan.angle = normalizeAngle(fan.angle + fan.angularVelocity * deltaSeconds);
+  });
 }
 
 function handleHoleCollisions() {
@@ -3255,6 +4134,9 @@ function updatePhysics(dt) {
     if (state.stageLocked) return;
 
     handleObstacleCollisions();
+    if (state.stageLocked) return;
+
+    handleFanCollisions();
     if (state.stageLocked) return;
 
     if (handleSawCollisions()) {
@@ -3567,6 +4449,66 @@ function drawHoles(opacity = 1) {
   ctx.restore();
 }
 
+function createRoundedRectPath(x, y, w, h, radius) {
+  const r = clamp(radius, 0, Math.min(w, h) * 0.5);
+
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+function drawFanBlade(fan) {
+  const innerOffset = fan.hubOuterRadius * 0.15;
+  const bladeLength = fan.bladeLength - innerOffset;
+  const bladeThickness = fan.bladeThickness;
+  const bladeY = -bladeThickness * 0.5;
+  const bladeRadius = bladeThickness * 0.3;
+
+  createRoundedRectPath(innerOffset, bladeY, bladeLength, bladeThickness, bladeRadius);
+  const fill = ctx.createLinearGradient(innerOffset, bladeY, innerOffset, bladeY + bladeThickness);
+  fill.addColorStop(0, '#C8D9F8');
+  fill.addColorStop(1, '#A8BDE4');
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+
+function drawFans() {
+  if (!state.worldFans.length) return;
+
+  state.worldFans.forEach((fan) => {
+    ctx.save();
+    ctx.translate(fan.x, fan.y);
+    ctx.rotate(fan.angle);
+
+    for (let bladeIndex = 0; bladeIndex < fan.blades; bladeIndex += 1) {
+      ctx.save();
+      ctx.rotate(((Math.PI * 2) / fan.blades) * bladeIndex);
+      drawFanBlade(fan);
+      ctx.restore();
+    }
+
+    ctx.beginPath();
+    ctx.arc(0, 0, fan.hubOuterRadius, 0, Math.PI * 2);
+    ctx.fillStyle = '#ECEFF5';
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(0, 0, fan.hubInnerRadius, 0, Math.PI * 2);
+    ctx.fillStyle = '#434868';
+    ctx.fill();
+
+    ctx.restore();
+  });
+}
+
 function drawSaws() {
   if (!state.worldSaws.length) return;
 
@@ -3749,6 +4691,22 @@ function drawEditorOverlay() {
     });
   }
 
+  if (state.editor.tool === 'fan' || state.editor.selectedFanIndex >= 0) {
+    state.worldFans.forEach((fan, fanIndex) => {
+      const selected = fanIndex === state.editor.selectedFanIndex;
+      ctx.beginPath();
+      ctx.arc(fan.x, fan.y, fan.r + (selected ? 7 : 5), 0, Math.PI * 2);
+      ctx.lineWidth = selected ? 2.6 : 1.8;
+      ctx.strokeStyle = selected ? 'rgba(67, 222, 110, 0.95)' : 'rgba(255, 255, 255, 0.62)';
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(fan.x, fan.y, selected ? 3.5 : 2.8, 0, Math.PI * 2);
+      ctx.fillStyle = selected ? 'rgba(67, 222, 110, 0.95)' : 'rgba(255, 255, 255, 0.9)';
+      ctx.fill();
+    });
+  }
+
   if (state.editor.tool === 'saw' || state.editor.selectedSawIndex >= 0) {
     state.worldSaws.forEach((saw, sawIndex) => {
       const selected = sawIndex === state.editor.selectedSawIndex;
@@ -3848,6 +4806,7 @@ function drawScene(pulse = 0, pulseColor = '#ffffff') {
     drawArena(EDITOR_ARENA_OPACITY);
     currentStage().gates.forEach((gate) => drawGate(gate, EDITOR_GATE_OPACITY));
   }
+  drawFans();
   drawSaws();
   drawHoles();
   drawSawDeathParticles();
@@ -3992,6 +4951,7 @@ function applyPolygonChange() {
   rebuildWorldPolygon();
   rebuildWorldObstacles();
   rebuildWorldHoles();
+  rebuildWorldFans();
   rebuildWorldSaws();
   syncBallWithStage();
   syncDebugPanel();
@@ -4067,6 +5027,14 @@ function removeAtPoint(point) {
     removeHoleByIndex(nearestHole.holeIndex);
     renderDebugLists();
     setDebugStatus('Дырка удалена.');
+    return;
+  }
+
+  const nearestFan = findNearestFan(point, 24);
+  if (nearestFan) {
+    removeFanByIndex(nearestFan.fanIndex);
+    renderDebugLists();
+    setDebugStatus('Вентилятор удален.');
     return;
   }
 
@@ -4280,6 +5248,21 @@ function handleEditorPointerDown(evt) {
     return;
   }
 
+  if (state.editor.tool === 'fan') {
+    const fanHit = findNearestFan(point, 22);
+    if (fanHit) {
+      setSelectedFan(fanHit.fanIndex);
+      state.editor.dragFan = { fanIndex: fanHit.fanIndex };
+      setDebugStatus(`Перетаскивание вентилятора ${fanHit.fanIndex + 1}.`);
+      return;
+    }
+
+    if (addFanAtPoint(normalized)) {
+      setDebugStatus('Вентилятор добавлен. Перетаскивайте его или меняйте параметры в панели.');
+    }
+    return;
+  }
+
   if (state.editor.tool === 'saw') {
     const sawHit = findNearestSaw(point, 22);
     if (sawHit) {
@@ -4414,6 +5397,11 @@ function handleEditorPointerMove(evt) {
     return;
   }
 
+  if (state.editor.tool === 'fan' && state.editor.dragFan) {
+    dragSelectedFan(normalized);
+    return;
+  }
+
   if (state.editor.tool === 'saw' && state.editor.dragSaw) {
     dragSelectedSaw(normalized);
     return;
@@ -4444,6 +5432,16 @@ function handleEditorPointerUp() {
     renderDebugLists();
     if (holeIndex >= 0) {
       setDebugStatus(`Позиция дырки ${holeIndex + 1} обновлена.`);
+    }
+    return;
+  }
+
+  if (state.editor.tool === 'fan' && state.editor.dragFan) {
+    const fanIndex = state.editor.dragFan.fanIndex;
+    state.editor.dragFan = null;
+    renderDebugLists();
+    if (fanIndex >= 0) {
+      setDebugStatus(`Позиция вентилятора ${fanIndex + 1} обновлена.`);
     }
     return;
   }
@@ -4558,6 +5556,7 @@ function resizeCanvas() {
     rebuildWorldPolygon();
     rebuildWorldObstacles();
     rebuildWorldHoles();
+    rebuildWorldFans({ preserveRuntime: true });
     rebuildWorldSaws();
     if (!state.ball.moving && !state.dragging && !state.stageLocked) {
       syncBallWithStage();
@@ -4573,6 +5572,7 @@ function frame(timestamp) {
   state.lastTs = timestamp;
   const deltaSeconds = (dt * 16.67) / 1000;
   state.sawVisual.angle = (state.sawVisual.angle + SAW_ROTATION_SPEED * deltaSeconds) % (Math.PI * 2);
+  updateFans(deltaSeconds);
 
   updateSawDeathAnimation(timestamp);
   updateVictoryAnimation(timestamp);
@@ -4598,6 +5598,7 @@ function setEditorTool(tool) {
   state.editor.dragObstacle = null;
   state.editor.dragGate = null;
   state.editor.dragHole = null;
+  state.editor.dragFan = null;
   state.editor.dragSaw = null;
   if (tool !== 'obstacle') {
     state.editor.draftObstacle = null;
@@ -4605,6 +5606,9 @@ function setEditorTool(tool) {
   }
   if (tool !== 'hole') {
     state.editor.selectedHoleIndex = -1;
+  }
+  if (tool !== 'fan') {
+    state.editor.selectedFanIndex = -1;
   }
   if (tool !== 'saw') {
     state.editor.selectedSawIndex = -1;
@@ -4754,6 +5758,8 @@ function bindUi() {
     state.editor.selectedGateIndex = -1;
     state.editor.dragHole = null;
     state.editor.selectedHoleIndex = -1;
+    state.editor.dragFan = null;
+    state.editor.selectedFanIndex = -1;
     state.editor.dragSaw = null;
     state.editor.selectedSawIndex = -1;
 
@@ -4913,6 +5919,222 @@ function bindUi() {
     setDebugStatus('Радиус выбранной дырки обновлен.');
   });
 
+  debugFanRadius.addEventListener('change', () => {
+    if (state.editor.selectedFanIndex < 0) {
+      debugFanRadius.value = formatDecimal(
+        normalizeFanRadius(debugFanRadius.value, DEFAULT_FAN_RADIUS),
+        3
+      );
+      setDebugStatus('Радиус применится к новым вентиляторам.');
+      return;
+    }
+
+    if (!applySelectedFanFromControls({
+      useRadius: true,
+      useBlades: false,
+      useDirection: false,
+      useOneWay: false,
+      useAutoSpin: false,
+      useSpinSpeed: false,
+      useDamping: false,
+      useImpactResponse: false,
+      useInitialAngle: false
+    })) return;
+    setDebugStatus('Радиус выбранного вентилятора обновлен.');
+  });
+
+  debugFanBlades.addEventListener('change', () => {
+    if (state.editor.selectedFanIndex < 0) {
+      debugFanBlades.value = String(normalizeFanBlades(debugFanBlades.value, 2));
+      syncSelectedFanControls();
+      setDebugStatus('Тип применится к новым вентиляторам.');
+      return;
+    }
+
+    if (!applySelectedFanFromControls({
+      useRadius: false,
+      useBlades: true,
+      useDirection: false,
+      useOneWay: false,
+      useAutoSpin: false,
+      useSpinSpeed: false,
+      useDamping: false,
+      useImpactResponse: false,
+      useInitialAngle: false
+    })) return;
+    setDebugStatus('Тип выбранного вентилятора обновлен.');
+  });
+
+  debugFanOneWay.addEventListener('change', () => {
+    if (state.editor.selectedFanIndex < 0) {
+      debugFanOneWay.value = normalizeFanOneWayInputValue(debugFanOneWay.value, false);
+      syncFanSpinControlState();
+      setDebugStatus('Ограничение направления применится к новым вентиляторам.');
+      return;
+    }
+
+    if (!applySelectedFanFromControls({
+      useRadius: false,
+      useBlades: false,
+      useDirection: false,
+      useOneWay: true,
+      useAutoSpin: false,
+      useSpinSpeed: false,
+      useDamping: false,
+      useImpactResponse: false,
+      useInitialAngle: false
+    })) return;
+    setDebugStatus('Ограничение направления выбранного вентилятора обновлено.');
+  });
+
+  debugFanAutoSpin.addEventListener('change', () => {
+    if (state.editor.selectedFanIndex < 0) {
+      const blades = normalizeFanBlades(debugFanBlades.value, 2);
+      debugFanAutoSpin.value = normalizeFanAutoSpinInputValue(
+        debugFanAutoSpin.value,
+        blades === 3
+      );
+      syncFanSpinControlState();
+      setDebugStatus('Режим кручения применится к новым вентиляторам.');
+      return;
+    }
+
+    if (!applySelectedFanFromControls({
+      useRadius: false,
+      useBlades: false,
+      useDirection: false,
+      useOneWay: false,
+      useAutoSpin: true,
+      useSpinSpeed: false,
+      useDamping: false,
+      useImpactResponse: false,
+      useInitialAngle: false
+    })) return;
+    setDebugStatus('Режим кручения выбранного вентилятора обновлен.');
+  });
+
+  debugFanSpinSpeed.addEventListener('change', () => {
+    if (state.editor.selectedFanIndex < 0) {
+      const blades = normalizeFanBlades(debugFanBlades.value, 2);
+      debugFanSpinSpeed.value = formatDecimal(
+        normalizeFanSpinSpeed(
+          debugFanSpinSpeed.value,
+          defaultFanSpinSpeedForBlades(blades)
+        ),
+        3
+      );
+      syncFanSpinControlState();
+      setDebugStatus('Скорость кручения применится к новым вентиляторам.');
+      return;
+    }
+
+    if (!applySelectedFanFromControls({
+      useRadius: false,
+      useBlades: false,
+      useDirection: false,
+      useOneWay: false,
+      useAutoSpin: false,
+      useSpinSpeed: true,
+      useDamping: false,
+      useImpactResponse: false,
+      useInitialAngle: false
+    })) return;
+    setDebugStatus('Скорость кручения выбранного вентилятора обновлена.');
+  });
+
+  debugFanDirection.addEventListener('change', () => {
+    if (state.editor.selectedFanIndex < 0) {
+      debugFanDirection.value = normalizeFanDirectionInputValue(debugFanDirection.value, 1);
+      setDebugStatus('Направление применится к новым вентиляторам.');
+      return;
+    }
+
+    if (!applySelectedFanFromControls({
+      useRadius: false,
+      useBlades: false,
+      useDirection: true,
+      useOneWay: false,
+      useAutoSpin: false,
+      useSpinSpeed: false,
+      useDamping: false,
+      useImpactResponse: false,
+      useInitialAngle: false
+    })) return;
+    setDebugStatus('Направление выбранного вентилятора обновлено.');
+  });
+
+  debugFanDamping.addEventListener('change', () => {
+    if (state.editor.selectedFanIndex < 0) {
+      debugFanDamping.value = formatDecimal(
+        normalizeFanDamping(debugFanDamping.value, DEFAULT_FAN_DAMPING),
+        4
+      );
+      setDebugStatus('Damping применится к новым вентиляторам.');
+      return;
+    }
+
+    if (!applySelectedFanFromControls({
+      useRadius: false,
+      useBlades: false,
+      useDirection: false,
+      useOneWay: false,
+      useAutoSpin: false,
+      useSpinSpeed: false,
+      useDamping: true,
+      useImpactResponse: false,
+      useInitialAngle: false
+    })) return;
+    setDebugStatus('Damping выбранного вентилятора обновлен.');
+  });
+
+  debugFanImpact.addEventListener('change', () => {
+    if (state.editor.selectedFanIndex < 0) {
+      debugFanImpact.value = formatDecimal(
+        normalizeFanImpactResponse(debugFanImpact.value, DEFAULT_FAN_IMPACT_RESPONSE),
+        3
+      );
+      setDebugStatus('Чувствительность к удару применится к новым вентиляторам.');
+      return;
+    }
+
+    if (!applySelectedFanFromControls({
+      useRadius: false,
+      useBlades: false,
+      useDirection: false,
+      useOneWay: false,
+      useAutoSpin: false,
+      useSpinSpeed: false,
+      useDamping: false,
+      useImpactResponse: true,
+      useInitialAngle: false
+    })) return;
+    setDebugStatus('Чувствительность к удару выбранного вентилятора обновлена.');
+  });
+
+  debugFanInitialAngle.addEventListener('change', () => {
+    if (state.editor.selectedFanIndex < 0) {
+      debugFanInitialAngle.value = formatDecimal(
+        normalizeFanInitialAngle(debugFanInitialAngle.value, 0),
+        1
+      );
+      setDebugStatus('Начальный поворот применится к новым вентиляторам.');
+      return;
+    }
+
+    if (!applySelectedFanFromControls({
+      useRadius: false,
+      useBlades: false,
+      useDirection: false,
+      useOneWay: false,
+      useAutoSpin: false,
+      useSpinSpeed: false,
+      useDamping: false,
+      useImpactResponse: false,
+      useInitialAngle: true
+    })) return;
+    setDebugStatus('Начальный поворот выбранного вентилятора обновлен.');
+  });
+
   debugSawRadius.addEventListener('change', () => {
     if (state.editor.selectedSawIndex < 0) {
       debugSawRadius.value = formatDecimal(
@@ -5019,6 +6241,29 @@ function bindUi() {
     setEditorTool('hole');
     if (!setSelectedHole(index)) return;
     setDebugStatus(`Выбрана дырка ${index + 1}. Перетаскивайте на поле или меняйте радиус.`);
+  });
+
+  debugFanList.addEventListener('click', (event) => {
+    const removeButton = event.target.closest('button[data-fan-index]');
+    if (removeButton) {
+      const index = Number(removeButton.dataset.fanIndex);
+      if (!Number.isInteger(index)) return;
+
+      removeFanByIndex(index);
+      renderDebugLists();
+      setDebugStatus('Вентилятор удален.');
+      return;
+    }
+
+    const selectButton = event.target.closest('button[data-fan-select]');
+    if (!selectButton) return;
+
+    const index = Number(selectButton.dataset.fanSelect);
+    if (!Number.isInteger(index)) return;
+
+    setEditorTool('fan');
+    if (!setSelectedFan(index)) return;
+    setDebugStatus(`Выбран вентилятор ${index + 1}. Перетаскивайте на поле или меняйте параметры.`);
   });
 
   debugSawList.addEventListener('click', (event) => {
