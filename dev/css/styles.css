@@ -1,5 +1,10 @@
 @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Open+Sans:wght@800&display=swap');
 
+@font-face {
+    font-family: Fedoka;
+    src: url(../Fredoka-Medium.ttf);
+}
+
 :root {
   --bg: #DCE7FF;
   --text: #103c92;
@@ -53,6 +58,87 @@ body[data-level-skin='4'] {
   --level-slot-image: url('../images/level_slot_4.png');
   --level-slot-connection-image: url('../images/level_slot_connection_4.png');
   --heart-slot-image: url('../images/heart_slot_4.png');
+}
+
+#quit-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: max(14px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+    background: rgba(15, 20, 39, 0.76);
+    z-index: 99997;
+    opacity: 0;
+    transition: opacity 0.22s ease;
+}
+
+#quit-modal {
+    width: min(86vw, 350px);
+    border-radius: 20px;
+    background: radial-gradient(#6b5cff, #5a43c6);
+    color: white;
+    text-align: center;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+    padding-bottom: 20px;
+    border-color: #362b2b;
+    border-width: 2px;
+    border-style: solid;
+    position: relative;
+}
+
+.quit-close {
+    display: block;
+    background-color: transparent;
+    position: absolute;
+    border: none;
+    top: -24px;
+    right: -24px;
+}
+
+.quit-title {
+    padding: 16px;
+    font-size: 32px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    font-family: Fedoka;
+    text-shadow: 2px 2px 0px #362b2b;
+}
+
+.quit-quit {
+    background: linear-gradient(180deg, #ffc64d, #f0a71e);
+    border: none;
+    padding: 14px 30px;
+    border-radius: 14px;
+    font-weight: bold;
+    font-size: 24px;
+    cursor: pointer;
+    color: #fff;
+    font-family: Fedoka;
+    border-color: #362b2b;
+    border-width: 2px;
+    border-style: solid;
+    text-shadow: 2px 2px 0px #362b2b;
+}
+
+.quit-warning {
+    font-family: Fedoka;
+    font-size: 24px;
+    margin-bottom: 20px;
+    font-weight: bold;
+    color: rgba(15, 20, 39, 0.76);
+}
+
+.quit-panel {
+    padding: 20px;
+    background-color: #9e97d6;
+    border-radius: 24px;
+    display: block;
+    width: 80%;
+    margin: auto;
+    margin-bottom: 20px;
 }
 
 .game-shell {

@@ -59,6 +59,7 @@ const MAX_SAW_RADIUS = 0.25;
 const CHAINSAW_IMAGE_PATH = './images/chainsaw.png';
 const CHAINSAW_SHADOW_IMAGE_PATH = './images/chainsaw_shadow.png';
 const POINTER_IMAGE_PATH = './images/pointer.png';
+const LOSE_SCREEN_ASSET_BASE_PATH = './LoseScreenTransfer/assets';
 const SAW_ROTATION_SPEED = Math.PI * 1.2;
 const SAW_DEATH_ANIMATION_MS = 500;
 const SAW_DEATH_PARTICLE_CAP = 34;
@@ -122,6 +123,9 @@ const progressSteps = document.getElementById('progressSteps');
 const livesDisplay = document.getElementById('livesDisplay');
 const restartBtn = document.getElementById('restartBtn');
 const backBtn = document.getElementById('backBtn');
+const quitOverlay = document.getElementById('quit-overlay');
+const quitCloseBtn = document.getElementById('quit-close');
+const quitQuitBtn = document.getElementById('quit-quit');
 const loseOverlay = document.getElementById('loseOverlay');
 const loseRetryBtn = document.getElementById('loseRetryBtn');
 const stageLoader = document.getElementById('stageLoader');
@@ -298,13 +302,56 @@ const stageImageLoadCache = new Map();
 let sawImageLoadPromise = null;
 let sawShadowImageLoadPromise = null;
 let tutorialPointerImageLoadPromise = null;
+let loseScreen = null;
 const uiSkinAvailabilityCache = new Map();
 let uiSkinApplyToken = 0;
 let pendingExternalLevelNumber = null;
+let coinsCount = 0;
+let heartsCount = 0;
+let timeOutCoinsCost = 0;
+let livesTimer = '--:--';
+let subscriptionStatus = true;
 const activeTutorialPointers = new Set();
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function normalizeExternalResourceCount(value) {
+  return Math.max(0, Math.floor(Number(value) || 0));
+}
+
+function normalizeExternalLivesTimer(value) {
+  const nextValue = String(value ?? '').trim();
+  return nextValue || '--:--';
+}
+
+function normalizeExternalBoolean(value, fallback = false) {
+  if (value === true || value === false) return value;
+  if (value == null) return fallback;
+  if (typeof value === 'number') return value !== 0;
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  return fallback;
+}
+
+function syncExternalResourceGlobals() {
+  if (typeof window === 'undefined') return;
+  window.coinsCount = coinsCount;
+  window.heartsCount = heartsCount;
+  window.timeOutCoinsCost = timeOutCoinsCost;
+  window.livesTimer = livesTimer;
+  window.subscriptionStatus = subscriptionStatus;
+}
+
+if (typeof window !== 'undefined') {
+  coinsCount = normalizeExternalResourceCount(window.coinsCount);
+  heartsCount = normalizeExternalResourceCount(window.heartsCount);
+  timeOutCoinsCost = normalizeExternalResourceCount(window.timeOutCoinsCost);
+  livesTimer = normalizeExternalLivesTimer(window.livesTimer);
+  subscriptionStatus = normalizeExternalBoolean(window.subscriptionStatus ?? window.isSubscribed, true);
+  syncExternalResourceGlobals();
 }
 
 function normalizeUiSkinLevel(value) {
@@ -1362,6 +1409,62 @@ function trackStageEventForUniWebView(eventActionPrefix) {
   const levelNumber = clamp(Number(currentLevel()?.number) || 1, 1, 9999);
   const stageNumber = clamp(Number(state.stageIndex) + 1 || 1, 1, STAGES_PER_LEVEL);
   window.location.href = `uniwebview://track?event=stage&event_action=${eventActionPrefix}_${levelNumber}_${stageNumber}`;
+}
+
+function getQuitCoinsCount() {
+  return coinsCount;
+}
+
+function getQuitHeartsCount() {
+  return heartsCount;
+}
+
+function closeViaUniWebViewWithResources() {
+  const coinsCount = getQuitCoinsCount();
+  const heartsCount = getQuitHeartsCount();
+  window.location = `uniwebview://close?coins=${coinsCount.toString()}&hearts=${heartsCount.toString()}`;
+}
+
+function completeLevelViaUniWebViewWithResources() {
+  const coinsCount = getQuitCoinsCount();
+  const heartsCount = getQuitHeartsCount();
+  window.location = `uniwebview://complete?coins=${coinsCount.toString()}&hearts=${heartsCount.toString()}`;
+}
+
+function hideQuitOverlay() {
+  if (!quitOverlay) return;
+  quitOverlay.style.opacity = '0';
+  quitOverlay.setAttribute('aria-hidden', 'true');
+  setTimeout(() => {
+    if (!quitOverlay) return;
+    if (quitOverlay.getAttribute('aria-hidden') !== 'true') return;
+    quitOverlay.style.display = 'none';
+  }, 220);
+}
+
+function showQuitOverlay() {
+  if (!quitOverlay) {
+    closeViaUniWebViewWithResources();
+    return;
+  }
+
+  quitOverlay.style.display = 'flex';
+  quitOverlay.setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => {
+    if (!quitOverlay) return;
+    quitOverlay.style.opacity = '1';
+  });
+}
+
+function hydrateQuitOverlayAssets() {
+  if (!quitOverlay) return;
+
+  const assets = quitOverlay.querySelectorAll('[data-src]');
+  assets.forEach((asset) => {
+    const src = String(asset.getAttribute('data-src') || '').trim();
+    if (!src) return;
+    asset.setAttribute('src', src);
+  });
 }
 
 function preloadStageImage(path) {
@@ -3266,14 +3369,71 @@ function updateCommonSettingsFromInputs() {
   return true;
 }
 
+function ensureLoseScreen() {
+  if (loseScreen) return loseScreen;
+  if (typeof LoseScreen !== 'function') return null;
+
+  loseScreen = new LoseScreen({
+    assetBasePath: LOSE_SCREEN_ASSET_BASE_PATH,
+    onRewardRequest: () => {
+      window.location = "uniwebview://reward";
+    },
+    onRewardResult: () => {
+      loadStage(state.levelIndex, state.stageIndex, { forceRefillLives: true });
+    },
+    onSoftRevive: (payload) => {
+      const updatedCoins = normalizeExternalResourceCount(payload?.state?.coinsCount);
+      setCoins(updatedCoins);
+      loadStage(state.levelIndex, state.stageIndex, { forceRefillLives: true });
+    },
+    onClose: () => {
+      window.location = `uniwebview://close?coins=${coinsCount.toString()}&hearts=${heartsCount.toString()}`;
+    },
+    onPurchase: () => {
+      window.location.href = "uniwebview://subscription_request";
+    }
+  });
+
+  return loseScreen;
+}
+
+function syncLoseScreenState() {
+  const screen = ensureLoseScreen();
+  if (!screen) return null;
+
+  screen.setCoins(getQuitCoinsCount());
+  screen.setTimeOutCoinsCost(timeOutCoinsCost);
+  screen.setHearts(getQuitHeartsCount());
+  screen.setMaxLives(Math.max(LIVES_PER_STAGE, getQuitHeartsCount()));
+  screen.setLivesTimer(livesTimer);
+  screen.setHeartsRecoverySeconds(0);
+  screen.setSubscriptionStatus(subscriptionStatus);
+
+  return screen;
+}
+
 function hideLoseOverlay() {
-  loseOverlay.classList.remove('is-visible');
-  loseOverlay.hidden = true;
+  if (loseScreen) {
+    loseScreen.hide();
+  }
+
+  if (loseOverlay) {
+    loseOverlay.classList.remove('is-visible');
+    loseOverlay.hidden = true;
+  }
 }
 
 function showLoseOverlay() {
-  loseOverlay.hidden = false;
-  requestAnimationFrame(() => loseOverlay.classList.add('is-visible'));
+  const screen = syncLoseScreenState();
+  if (screen) {
+    screen.show();
+    return;
+  }
+
+  if (loseOverlay) {
+    loseOverlay.hidden = false;
+    requestAnimationFrame(() => loseOverlay.classList.add('is-visible'));
+  }
 }
 
 function syncGateEdgeOptions() {
@@ -3771,6 +3931,7 @@ function loadStage(levelIndex, stageIndex, options = {}) {
   clearWrongGateAnimation();
   syncLivesForStage({ preserveLives, forceRefill: forceRefillLives });
   hideLoseOverlay();
+  hideQuitOverlay();
 
   rebuildWorldPolygon();
   rebuildWorldObstacles();
@@ -3795,12 +3956,7 @@ function nextStageOrLevel() {
     loadStage(state.levelIndex, state.stageIndex + 1);
     return;
   }
-
-  if (state.levelIndex < state.levels.length - 1) {
-    setTimeout(() => loadStage(state.levelIndex + 1, 0), 680);
-  } else {
-    setTimeout(() => loadStage(0, 0), 1000);
-  }
+  completeLevelViaUniWebViewWithResources();
 }
 
 function reflectByNormal(nx, ny) {
@@ -5984,8 +6140,68 @@ function setLevel(levelNumber) {
   });
 }
 
+function setCoins(value) {
+  coinsCount = normalizeExternalResourceCount(value);
+  syncExternalResourceGlobals();
+  if (loseScreen) {
+    loseScreen.setCoins(coinsCount);
+  }
+  return coinsCount;
+}
+
+function setHearts(value) {
+  heartsCount = normalizeExternalResourceCount(value);
+  syncExternalResourceGlobals();
+  if (loseScreen) {
+    loseScreen.setHearts(heartsCount);
+    loseScreen.setMaxLives(Math.max(LIVES_PER_STAGE, heartsCount));
+  }
+  return heartsCount;
+}
+
+function setTimeOutCoinsCost(value) {
+  timeOutCoinsCost = normalizeExternalResourceCount(value);
+  syncExternalResourceGlobals();
+  if (loseScreen) {
+    loseScreen.setTimeOutCoinsCost(timeOutCoinsCost);
+  }
+  return timeOutCoinsCost;
+}
+
+function setLivesTimer(value) {
+  livesTimer = normalizeExternalLivesTimer(value);
+  syncExternalResourceGlobals();
+  if (loseScreen) {
+    loseScreen.setLivesTimer(livesTimer);
+  }
+  return livesTimer;
+}
+
+function setSubscriptionStatus(value) {
+  subscriptionStatus = normalizeExternalBoolean(value, subscriptionStatus);
+  syncExternalResourceGlobals();
+  if (loseScreen) {
+    loseScreen.setSubscriptionStatus(subscriptionStatus);
+  }
+  return subscriptionStatus;
+}
+
+function rewardResult(value) {
+  const screen = ensureLoseScreen();
+  if (!screen) return false;
+  screen.rewardResult(value);
+  return true;
+}
+
 if (typeof window !== 'undefined') {
   window.setLevel = setLevel;
+  window.setCoins = setCoins;
+  window.setHearts = setHearts;
+  window.setTimeOutCoinsCost = setTimeOutCoinsCost;
+  window.setLivesTimer = setLivesTimer;
+  window.setSubscriptionStatus = setSubscriptionStatus;
+  window.rewardResult = rewardResult;
+  syncExternalResourceGlobals();
 }
 
 function insertNewLevel(level) {
@@ -6065,15 +6281,19 @@ async function saveCommonSettings() {
 function bindUi() {
   fillColorSelect(debugBallColor);
   fillColorSelect(debugGateColor);
+  hydrateQuitOverlayAssets();
+  hideQuitOverlay();
 
   restartBtn.addEventListener('click', restartLevel);
-  loseRetryBtn.addEventListener('click', () => {
+  if (loseRetryBtn) loseRetryBtn.addEventListener('click', () => {
     loadStage(state.levelIndex, state.stageIndex, { forceRefillLives: true });
   });
 
   backBtn.addEventListener('click', () => {
-    window.location = "uniwebview://close";
+    showQuitOverlay();
   });
+  if (quitCloseBtn) quitCloseBtn.addEventListener('click', hideQuitOverlay);
+  if (quitQuitBtn) quitQuitBtn.addEventListener('click', closeViaUniWebViewWithResources);
 
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);

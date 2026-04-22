@@ -1,0 +1,315 @@
+.ls-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(10px, 2vh, 16px);
+  padding: max(18px, env(safe-area-inset-top)) 12px max(18px, env(safe-area-inset-bottom));
+  background: rgba(90, 97, 140, 0.94);
+  z-index: 99997;
+  opacity: 0;
+  transition: opacity 0.22s ease;
+}
+
+.ls-top-bar {
+  position: absolute;
+  top: max(28px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(94vw, 520px);
+  display: flex;
+  justify-content: center;
+  gap: clamp(26px, 7vw, 54px);
+  z-index: 4;
+}
+
+.ls-resource {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: min(31.5vw, 171px);
+  aspect-ratio: 244 / 96;
+  padding: 0 clamp(20px, 3.8vw, 30px) 0 clamp(62px, 11.2vw, 70px);
+}
+
+.ls-resource-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+}
+
+.ls-heart-count {
+  position: absolute;
+  left: clamp(29px, 5.2vw, 36px);
+  top: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 1ch;
+  text-align: center;
+  color: #ffffff;
+  font-family: "Open Sans", sans-serif;
+  font-weight: 800;
+  font-size: clamp(22px, 4.42vw, 34px);
+  line-height: 1;
+  pointer-events: none;
+  text-shadow:
+    -1px -1px 0 #b50000,
+    1px -1px 0 #b50000,
+    -1px 1px 0 #b50000,
+    1px 1px 0 #b50000,
+    0 2px 0 rgba(120, 0, 0, 0.45);
+  z-index: 1;
+}
+
+.ls-heart-status,
+.ls-coins-value {
+  display: block;
+  width: 100%;
+  text-align: center;
+  color: #0f3b8e;
+  font-family: "Open Sans", sans-serif;
+  font-weight: 800;
+  font-size: clamp(18px, 3.9vw, 31px);
+  line-height: 1;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.45);
+  z-index: 1;
+}
+
+.ls-heart-status.not-full {
+  font-size: clamp(15px, 3.1vw, 24px);
+}
+
+.ls-modal {
+  width: min(88vw, 470px);
+  margin-top: clamp(84px, 13vh, 112px);
+  border-radius: 28px;
+  border: 2px solid #d9deea;
+  background: #eceef4;
+  box-shadow:
+    inset 0 -4px 0 #7fa8e6,
+    0 18px 30px rgba(8, 14, 41, 0.34);
+  padding: clamp(18px, 5vw, 24px) clamp(16px, 4vw, 18px) clamp(22px, 5vw, 26px);
+  scale: 0.9;
+  transform-origin: center top;
+  position: relative;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.ls-modal,
+.ls-modal * {
+  font-family: "Open Sans", sans-serif !important;
+}
+
+.ls-close {
+  position: absolute;
+  right: 10px;
+  top: 8px;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #8fa0c8;
+  font-size: 50px;
+  line-height: 0.62;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.ls-title {
+  width: 100%;
+  margin: 8px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: #444770;
+  text-align: center;
+  font-weight: 800;
+  font-size: clamp(28px, 6.8vw, 48px);
+  line-height: 0.95;
+  letter-spacing: 0.008em;
+}
+
+.ls-subtitle {
+  margin-top: 2px;
+  text-align: center;
+  font-weight: 500;
+  font-size: clamp(15px, 3.74vw, 29px);
+  color: #474b75;
+  line-height: 1.05;
+}
+
+.ls-subtitle span {
+  color: #2e9d26;
+}
+
+.ls-card {
+  margin-top: clamp(14px, 3vw, 18px);
+  border: 0;
+  border-radius: 22px;
+  background: #d0d7e7;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  padding: clamp(14px, 4vw, 20px) clamp(10px, 2vw, 14px) clamp(14px, 3vw, 18px);
+}
+
+.ls-clock-image {
+  display: block;
+  width: min(40vw, 205px);
+  margin: 0 auto;
+  filter: drop-shadow(0 6px 8px rgba(0, 30, 97, 0.22));
+}
+
+.ls-actions {
+  margin-top: clamp(12px, 3vw, 16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 2.8vw, 20px);
+}
+
+.ls-action-btn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  position: relative;
+  width: min(39vw, 196px);
+  cursor: pointer;
+}
+
+.ls-action-btn img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.ls-soft-btn img {
+  transform: translateX(-2px);
+}
+
+.ls-action-btn.is-disabled,
+.ls-action-btn:disabled {
+  cursor: default;
+}
+
+.ls-action-btn.is-disabled img,
+.ls-action-btn:disabled img {
+  filter: grayscale(0.15) brightness(0.78);
+}
+
+.ls-action-btn.is-disabled .ls-coin-cost,
+.ls-action-btn:disabled .ls-coin-cost {
+  opacity: 0.78;
+}
+
+.ls-coin-cost,
+.ls-reward-label {
+  position: absolute;
+  inset: 0 0 0 34%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-4px, -3px);
+  font-weight: 800;
+  font-size: 34px;
+  line-height: 1;
+  color: #edf8fa;
+}
+
+.ls-coin-cost {
+  text-shadow:
+    0 2px 0 rgba(27, 77, 20, 0.46),
+    -1px -1px 0 #2f9b1b,
+    1px -1px 0 #2f9b1b,
+    -1px 1px 0 #2f9b1b,
+    1px 1px 0 #2f9b1b;
+}
+
+.ls-reward-label {
+  text-shadow:
+    0 2px 0 rgba(22, 68, 154, 0.5),
+    -1px -1px 0 #1f66c6,
+    1px -1px 0 #1f66c6,
+    -1px 1px 0 #1f66c6,
+    1px 1px 0 #1f66c6;
+}
+
+.ls-hidden-restart {
+  display: none !important;
+}
+
+.ls-offer {
+  width: min(79.2vw, 423px);
+  margin-top: -26px;
+  position: relative;
+  max-width: 100%;
+}
+
+.ls-offer[hidden] {
+  display: none !important;
+}
+
+.ls-offer > img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.ls-offer-purchase {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: clamp(-52px, -7vh, -40px) auto 0;
+  width: min(52.2vw, 248px);
+  display: block;
+  position: relative;
+  z-index: 2;
+  cursor: pointer;
+}
+
+.ls-offer-purchase img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+@media (max-width: 460px) {
+  .ls-overlay {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .ls-modal {
+    width: calc(100vw - 16px);
+  }
+
+  .ls-offer {
+    width: calc((100vw - 16px) * 0.9);
+  }
+
+  .ls-offer-purchase {
+    width: min(55.8vw, 225px);
+    margin-top: clamp(-48px, -8vh, -34px);
+  }
+
+  .ls-close {
+    right: 6px;
+    top: 6px;
+  }
+
+  .ls-action-btn {
+    width: min(41vw, 182px);
+  }
+
+  .ls-coin-cost,
+  .ls-reward-label {
+    font-size: 27px;
+  }
+}

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Buka - Color Gates</title>
   <link rel="stylesheet" href="./css/styles.css">
+  <link rel="stylesheet" href="./LoseScreenTransfer/lose-screen.css">
 </head>
 <body>
   <main class="game-shell">
@@ -31,6 +32,18 @@
       <div class="stage-loader" id="stageLoader" hidden aria-live="polite">Loading...</div>
     </section>
   </main>
+
+  <div id="quit-overlay" style="display:none;" aria-hidden="true">
+    <div id="quit-modal">
+      <div class="quit-title">QUIT LEVEL?</div>
+      <div class="quit-panel">
+        <img data-src="heart_broken.png" class="" width="60%" height="auto" decoding="async">
+        <div class="quit-warning">You will lose a life!</div>
+      </div>
+        <button id="quit-quit" class="quit-quit">QUIT</button>
+      <button id="quit-close" class="quit-close"><img data-src="btn_close.png" width="56px" height="56px" decoding="async"/></button>
+    </div>
+  </div>
 
   <aside class="debug-panel" id="debugPanel" aria-label="Панель генератора уровней">
     <div class="debug-head">
@@ -282,13 +295,7 @@
     <p class="debug-status" id="debugStatus">Панель готова.</p>
   </aside>
 
-  <div class="result-overlay" id="loseOverlay" hidden>
-    <div class="result-card" role="alertdialog" aria-modal="true" aria-labelledby="loseTitle">
-      <h2 id="loseTitle">You lost</h2>
-      <button class="save-btn" id="loseRetryBtn" type="button">Retry</button>
-    </div>
-  </div>
-
+  <script src="./LoseScreenTransfer/lose-screen.js"></script>
   <script type="module" src="./js/app.js"></script>
 </body>
 </html>
