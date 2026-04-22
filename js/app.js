@@ -64,6 +64,9 @@ const SAW_DEATH_ANIMATION_MS = 500;
 const SAW_DEATH_PARTICLE_CAP = 34;
 const VICTORY_ANIMATION_MS = 500;
 const VICTORY_PARTICLE_CAP = 100;
+const WRONG_GATE_ANIMATION_MS = 500;
+const WRONG_GATE_PARTICLE_CAP = 70;
+const UI_SKIN_FALLBACK_LEVEL = 1;
 const TUTORIAL_IDLE_DELAY_MS = 5000;
 const TUTORIAL_HOLD_MS = 650;
 const TUTORIAL_PRESS_MS = 280;
@@ -254,6 +257,13 @@ const state = {
     ballAlpha: 1,
     particles: []
   },
+  wrongGate: {
+    active: false,
+    startedAt: 0,
+    durationMs: WRONG_GATE_ANIMATION_MS,
+    ballAlpha: 1,
+    particles: []
+  },
   tutorial: {
     active: false,
     idleStartedAt: 0,
@@ -288,10 +298,85 @@ const stageImageLoadCache = new Map();
 let sawImageLoadPromise = null;
 let sawShadowImageLoadPromise = null;
 let tutorialPointerImageLoadPromise = null;
+const uiSkinAvailabilityCache = new Map();
+let uiSkinApplyToken = 0;
 const activeTutorialPointers = new Set();
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function normalizeUiSkinLevel(value) {
+  return Math.max(UI_SKIN_FALLBACK_LEVEL, Math.floor(Number(value) || UI_SKIN_FALLBACK_LEVEL));
+}
+
+function uiSkinAssetPaths(levelNumber) {
+  const safeLevel = normalizeUiSkinLevel(levelNumber);
+  return [
+    `./images/level_slot_${safeLevel}.png`,
+    `./images/level_slot_connection_${safeLevel}.png`,
+    `./images/heart_slot_${safeLevel}.png`
+  ];
+}
+
+function checkImageExists(path) {
+  return new Promise((resolve) => {
+    const image = new Image();
+    let finished = false;
+
+    const finish = (exists) => {
+      if (finished) return;
+      finished = true;
+      resolve(Boolean(exists));
+    };
+
+    image.onload = () => finish(image.naturalWidth > 0 && image.naturalHeight > 0);
+    image.onerror = () => finish(false);
+    image.src = path;
+
+    if (image.complete) {
+      finish(image.naturalWidth > 0 && image.naturalHeight > 0);
+    }
+  });
+}
+
+function hasUiSkinAssets(levelNumber) {
+  const safeLevel = normalizeUiSkinLevel(levelNumber);
+  if (safeLevel === UI_SKIN_FALLBACK_LEVEL) return Promise.resolve(true);
+  if (uiSkinAvailabilityCache.has(safeLevel)) {
+    return uiSkinAvailabilityCache.get(safeLevel);
+  }
+
+  const checkPromise = Promise.all(uiSkinAssetPaths(safeLevel).map(checkImageExists))
+    .then((results) => results.every(Boolean))
+    .catch(() => false);
+
+  uiSkinAvailabilityCache.set(safeLevel, checkPromise);
+  return checkPromise;
+}
+
+function applyUiSkinLevel(levelNumber) {
+  document.body?.setAttribute('data-level-skin', String(normalizeUiSkinLevel(levelNumber)));
+}
+
+function syncUiSkinForLevel(levelNumber) {
+  const requestedLevel = normalizeUiSkinLevel(levelNumber);
+  const token = ++uiSkinApplyToken;
+
+  if (requestedLevel === UI_SKIN_FALLBACK_LEVEL) {
+    applyUiSkinLevel(UI_SKIN_FALLBACK_LEVEL);
+    return;
+  }
+
+  void hasUiSkinAssets(requestedLevel)
+    .then((isAvailable) => {
+      if (token !== uiSkinApplyToken) return;
+      applyUiSkinLevel(isAvailable ? requestedLevel : UI_SKIN_FALLBACK_LEVEL);
+    })
+    .catch(() => {
+      if (token !== uiSkinApplyToken) return;
+      applyUiSkinLevel(UI_SKIN_FALLBACK_LEVEL);
+    });
 }
 
 function round(value, precision = 4) {
@@ -2003,41 +2088,87 @@ function clearVictoryAnimation() {
   state.ball.renderScale = 1;
 }
 
+function clearWrongGateAnimation() {
+  state.wrongGate.active = false;
+  state.wrongGate.startedAt = 0;
+  state.wrongGate.ballAlpha = 1;
+  state.wrongGate.particles = [];
+  state.ball.renderScale = 1;
+}
+
 function beginVictoryAnimation(gate) {
+  const originX = state.ball.x;
+  const originY = state.ball.y;
+  const ballRadius = Math.max(2, state.ball.r);
+  const burstRadius = ballRadius * 1.2;
   const segment = gateSegment(gate);
   const gateColor = colorValue(gate.color);
   const particles = [];
+  const ballParticleCount = clamp(
+    Math.round(burstRadius * 1.45),
+    16,
+    Math.max(16, Math.floor(VICTORY_PARTICLE_CAP * 0.68))
+  );
 
-  if (segment) {
+  for (let i = 0; i < ballParticleCount && particles.length < VICTORY_PARTICLE_CAP; i += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const spawnOffset = Math.random() * burstRadius * 0.34;
+    const speed = burstRadius * (5.4 + Math.random() * 8.8);
+    const jitter = (Math.random() - 0.5) * burstRadius * 2.4;
+    const size = Math.max(1.2, burstRadius * (0.09 + Math.random() * 0.2));
+    const shade = Math.round(-30 + Math.random() * 92);
+    const glow = Math.round(32 + Math.random() * 92);
+
+    particles.push({
+      x: originX + Math.cos(angle) * spawnOffset,
+      y: originY + Math.sin(angle) * spawnOffset,
+      vx: Math.cos(angle) * speed + jitter,
+      vy: Math.sin(angle) * speed - burstRadius * (1.2 + Math.random() * 1.9),
+      gravity: burstRadius * (18 + Math.random() * 18),
+      delayMs: Math.random() * 80,
+      size,
+      alpha: 0.55 + Math.random() * 0.45,
+      color: shadeColor(gateColor, shade),
+      glowColor: shadeColor(gateColor, glow)
+    });
+  }
+
+  if (segment && particles.length < VICTORY_PARTICLE_CAP) {
     const gateLength = Math.hypot(segment.ex - segment.sx, segment.ey - segment.sy);
-    const particleCount = clamp(Math.round(gateLength / 2.0), 14, VICTORY_PARTICLE_CAP);
+    const segmentParticleTarget = clamp(
+      Math.round(gateLength / 1.9),
+      12,
+      Math.max(12, Math.floor(VICTORY_PARTICLE_CAP * 0.55))
+    );
+    const segmentParticleCount = Math.min(
+      segmentParticleTarget,
+      VICTORY_PARTICLE_CAP - particles.length
+    );
     const tx = Number.isFinite(segment.tx) ? segment.tx : 0;
     const ty = Number.isFinite(segment.ty) ? segment.ty : 0;
     const nx = Number.isFinite(segment.nx) ? segment.nx : 0;
     const ny = Number.isFinite(segment.ny) ? segment.ny : 0;
 
-    for (let i = 0; i < particleCount; i += 1) {
+    for (let i = 0; i < segmentParticleCount; i += 1) {
       const spread = Math.random();
-      const tangentShift = (Math.random() - 0.5) * 6;
+      const tangentShift = (Math.random() - 0.5) * burstRadius * 0.42;
       const x = segment.sx + (segment.ex - segment.sx) * spread + tx * tangentShift;
       const y = segment.sy + (segment.ey - segment.sy) * spread + ty * tangentShift;
-      const outwardSpeed = state.ball.r * (4 + Math.random() * 5.6);
-      const sideSpeed = (Math.random() - 0.5) * state.ball.r * 6.4;
-      const size = Math.max(1.5, state.ball.r * (0.12 + Math.random() * 0.22));
-      const shade = Math.round(-22 + Math.random() * 56);
-      const glow = Math.round(26 + Math.random() * 64);
+      const outwardSpeed = burstRadius * (3.9 + Math.random() * 5.9);
+      const sideSpeed = (Math.random() - 0.5) * burstRadius * 5.8;
+      const size = Math.max(1.1, burstRadius * (0.08 + Math.random() * 0.18));
+      const shade = Math.round(-22 + Math.random() * 74);
+      const glow = Math.round(28 + Math.random() * 78);
 
       particles.push({
         x,
         y,
         vx: nx * outwardSpeed + tx * sideSpeed,
         vy: ny * outwardSpeed + ty * sideSpeed,
-        gravity: state.ball.r * (6 + Math.random() * 13),
-        delayMs: Math.random() * 70,
+        gravity: burstRadius * (12 + Math.random() * 15),
+        delayMs: Math.random() * 85,
         size,
-        alpha: 0.55 + Math.random() * 0.45,
-        angle: Math.random() * Math.PI * 2,
-        spin: (Math.random() - 0.5) * 10.8,
+        alpha: 0.52 + Math.random() * 0.4,
         color: shadeColor(gateColor, shade),
         glowColor: shadeColor(gateColor, glow)
       });
@@ -2049,6 +2180,46 @@ function beginVictoryAnimation(gate) {
   state.victory.durationMs = VICTORY_ANIMATION_MS;
   state.victory.ballAlpha = 1;
   state.victory.particles = particles;
+  state.ball.renderScale = 1;
+}
+
+function beginWrongGateAnimation(gate) {
+  const originX = state.ball.x;
+  const originY = state.ball.y;
+  const ballRadius = Math.max(2, state.ball.r);
+  const burstRadius = ballRadius * 1.15;
+  const ballColor = colorValue(state.ball.colorToken);
+  const particleCount = clamp(Math.round(burstRadius * 1.6), 16, WRONG_GATE_PARTICLE_CAP);
+  const particles = [];
+
+  for (let i = 0; i < particleCount; i += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const spawnOffset = Math.random() * burstRadius * 0.3;
+    const speed = burstRadius * (5 + Math.random() * 8.4);
+    const jitter = (Math.random() - 0.5) * burstRadius * 2.2;
+    const size = Math.max(1.1, burstRadius * (0.09 + Math.random() * 0.19));
+    const shade = Math.round(-36 + Math.random() * 84);
+    const glow = Math.round(24 + Math.random() * 84);
+
+    particles.push({
+      x: originX + Math.cos(angle) * spawnOffset,
+      y: originY + Math.sin(angle) * spawnOffset,
+      vx: Math.cos(angle) * speed + jitter,
+      vy: Math.sin(angle) * speed - burstRadius * (1.1 + Math.random() * 1.8),
+      gravity: burstRadius * (18 + Math.random() * 18),
+      delayMs: Math.random() * 75,
+      size,
+      alpha: 0.5 + Math.random() * 0.42,
+      color: shadeColor(ballColor, shade),
+      glowColor: shadeColor(ballColor, glow)
+    });
+  }
+
+  state.wrongGate.active = true;
+  state.wrongGate.startedAt = performance.now();
+  state.wrongGate.durationMs = WRONG_GATE_ANIMATION_MS;
+  state.wrongGate.ballAlpha = 1;
+  state.wrongGate.particles = particles;
   state.ball.renderScale = 1;
 }
 
@@ -2115,12 +2286,37 @@ function updateVictoryAnimation(timestamp) {
   const eased = easeOutCubic(progress);
 
   state.ball.renderScale = 1 + 0.1 * eased;
-  state.victory.ballAlpha = 1 - progress;
+  state.victory.ballAlpha = 1 - progress * 2.0;
 
   if (progress < 1) return;
 
   clearVictoryAnimation();
   nextStageOrLevel();
+}
+
+function updateWrongGateAnimation(timestamp) {
+  if (!state.wrongGate.active) return;
+
+  const duration = Math.max(1, state.wrongGate.durationMs);
+  const elapsed = Math.max(0, timestamp - state.wrongGate.startedAt);
+  const progress = clamp(elapsed / duration, 0, 1);
+  const eased = easeOutCubic(progress);
+
+  state.ball.renderScale = 1 + 0.12 * eased;
+  state.wrongGate.ballAlpha = 1 - progress * 2.0;
+
+  if (progress < 1) return;
+
+  clearWrongGateAnimation();
+  state.dragging = false;
+  state.pull.x = 0;
+  state.pull.y = 0;
+  state.ball.moving = false;
+  state.ball.vx = 0;
+  state.ball.vy = 0;
+  state.ball.renderScale = 1;
+  if (tryConsumeLifeAndReplayStage()) return;
+  showLoseOverlay();
 }
 
 function gateSpan(gate) {
@@ -2915,7 +3111,9 @@ function findNearestObstacleEdge(point, obstacleIndex, maxDistance = 18) {
 }
 
 function updateHeader() {
-  levelLabel.textContent = `LEVEL ${currentLevel().number}`;
+  const levelNumber = Number(currentLevel()?.number) || 1;
+  levelLabel.textContent = `LEVEL ${levelNumber}`;
+  syncUiSkinForLevel(levelNumber);
 }
 
 function updateProgress() {
@@ -3561,6 +3759,7 @@ function loadStage(levelIndex, stageIndex, options = {}) {
   state.editor.draftObstacle = null;
   clearSawDeathAnimation();
   clearVictoryAnimation();
+  clearWrongGateAnimation();
   syncLivesForStage({ preserveLives, forceRefill: forceRefillLives });
   hideLoseOverlay();
 
@@ -3617,6 +3816,7 @@ function onCorrectGate(gate) {
   state.ball.vy = 0;
   clearSawDeathAnimation();
   clearVictoryAnimation();
+  clearWrongGateAnimation();
   beginVictoryAnimation(gate);
 }
 
@@ -3626,6 +3826,7 @@ function onStageFailed() {
   state.stageLocked = true;
   clearSawDeathAnimation();
   clearVictoryAnimation();
+  clearWrongGateAnimation();
   state.dragging = false;
   state.pull.x = 0;
   state.pull.y = 0;
@@ -3637,11 +3838,28 @@ function onStageFailed() {
   showLoseOverlay();
 }
 
+function onWrongGate(gate) {
+  if (state.stageLocked) return;
+
+  state.stageLocked = true;
+  clearSawDeathAnimation();
+  clearVictoryAnimation();
+  clearWrongGateAnimation();
+  state.dragging = false;
+  state.pull.x = 0;
+  state.pull.y = 0;
+  state.ball.moving = false;
+  state.ball.vx = 0;
+  state.ball.vy = 0;
+  beginWrongGateAnimation(gate);
+}
+
 function onSawCaptured() {
   if (state.stageLocked) return;
 
   state.stageLocked = true;
   clearVictoryAnimation();
+  clearWrongGateAnimation();
   state.dragging = false;
   state.pull.x = 0;
   state.pull.y = 0;
@@ -3656,6 +3874,7 @@ function onHoleCaptured(hole) {
 
   state.stageLocked = true;
   clearVictoryAnimation();
+  clearWrongGateAnimation();
   state.dragging = false;
   state.pull.x = 0;
   state.pull.y = 0;
@@ -3940,7 +4159,7 @@ function handlePolygonCollisions() {
         if (gateColor === ballColor) {
           onCorrectGate(gate);
         } else {
-          onStageFailed();
+          onWrongGate(gate);
         }
         return;
       }
@@ -4064,7 +4283,7 @@ function handleObstacleCollisions() {
           if (gateColor === ballColor) {
             onCorrectGate(gate);
           } else {
-            onStageFailed();
+            onWrongGate(gate);
           }
           return;
         }
@@ -4291,21 +4510,55 @@ function drawVictoryParticles() {
     const timeSec = localElapsed / 1000;
     const px = particle.x + particle.vx * timeSec;
     const py = particle.y + particle.vy * timeSec + 0.5 * particle.gravity * timeSec * timeSec;
-    const size = Math.max(0.8, particle.size * (1 - progress * 0.62));
+    const size = Math.max(0.8, particle.size * (1 - progress * 0.82));
     const alpha = (1 - progress) * particle.alpha;
-    const glowSize = size * 1.48;
-
-    ctx.save();
-    ctx.translate(px, py);
-    ctx.rotate(particle.angle + particle.spin * timeSec);
-    ctx.globalAlpha = alpha * 0.48;
-    ctx.fillStyle = particle.glowColor;
-    ctx.fillRect(-glowSize * 0.5, -glowSize * 0.5, glowSize, glowSize);
 
     ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(px, py, size, 0, Math.PI * 2);
     ctx.fillStyle = particle.color;
-    ctx.fillRect(-size * 0.5, -size * 0.5, size, size);
-    ctx.restore();
+    ctx.fill();
+
+    ctx.globalAlpha = alpha * 0.68;
+    ctx.beginPath();
+    ctx.arc(px - size * 0.22, py - size * 0.22, size * 0.46, 0, Math.PI * 2);
+    ctx.fillStyle = particle.glowColor;
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawWrongGateParticles() {
+  if (!state.wrongGate.active || !state.wrongGate.particles.length) return;
+
+  const elapsed = Math.max(0, performance.now() - state.wrongGate.startedAt);
+  const duration = Math.max(1, state.wrongGate.durationMs);
+
+  ctx.save();
+
+  for (const particle of state.wrongGate.particles) {
+    const localElapsed = Math.max(0, elapsed - particle.delayMs);
+    const progress = clamp(localElapsed / duration, 0, 1);
+    if (progress <= 0 || progress >= 1) continue;
+
+    const timeSec = localElapsed / 1000;
+    const px = particle.x + particle.vx * timeSec;
+    const py = particle.y + particle.vy * timeSec + 0.5 * particle.gravity * timeSec * timeSec;
+    const size = Math.max(0.8, particle.size * (1 - progress * 0.82));
+    const alpha = (1 - progress) * particle.alpha;
+
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(px, py, size, 0, Math.PI * 2);
+    ctx.fillStyle = particle.color;
+    ctx.fill();
+
+    ctx.globalAlpha = alpha * 0.68;
+    ctx.beginPath();
+    ctx.arc(px - size * 0.22, py - size * 0.22, size * 0.46, 0, Math.PI * 2);
+    ctx.fillStyle = particle.glowColor;
+    ctx.fill();
   }
 
   ctx.restore();
@@ -4328,7 +4581,7 @@ function drawAimFromPull(rawPullX, rawPullY) {
   const dirY = -pullY / distance;
   const trailLen = 54 + distance * 0.95;
   const baseWidth = 11 + (distance / maxPull) * 9;
-  const tipWidth = 1.6 + (distance / maxPull) * 2.4;
+  const tipWidth = 0.1;
 
   const tipX = state.ball.x + dirX * trailLen;
   const tipY = state.ball.y + dirY * trailLen;
@@ -4343,8 +4596,8 @@ function drawAimFromPull(rawPullX, rawPullY) {
   ctx.closePath();
 
   const glow = ctx.createLinearGradient(state.ball.x, state.ball.y, tipX, tipY);
-  glow.addColorStop(0, hexToRgba(aimColor, 0.62));
-  glow.addColorStop(1, hexToRgba(aimColor, 0.08));
+  glow.addColorStop(0, hexToRgba(aimColor, 0.08));
+  glow.addColorStop(1, hexToRgba(aimColor, 0.62));
   ctx.fillStyle = glow;
   ctx.fill();
 
@@ -4810,13 +5063,17 @@ function drawScene(pulse = 0, pulseColor = '#ffffff') {
   drawSaws();
   drawHoles();
   drawSawDeathParticles();
+  drawWrongGateParticles();
   drawVictoryParticles();
   drawAim();
   drawTutorialAim();
+  const ballOpacity = state.victory.active
+    ? state.victory.ballAlpha
+    : (state.wrongGate.active ? state.wrongGate.ballAlpha : 1);
   drawBall(
     pulse,
     pulseColor,
-    state.victory.active ? state.victory.ballAlpha : 1
+    ballOpacity
   );
   drawTutorialPointer();
   drawEditorOverlay();
@@ -5575,6 +5832,7 @@ function frame(timestamp) {
   updateFans(deltaSeconds);
 
   updateSawDeathAnimation(timestamp);
+  updateWrongGateAnimation(timestamp);
   updateVictoryAnimation(timestamp);
   updatePhysics(dt);
   updateTutorialState(timestamp);

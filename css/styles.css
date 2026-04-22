@@ -8,6 +8,9 @@
   --active: #1cdc2c;
   --btn-blue: #3e5ecf;
   --btn-blue-dark: #2947b0;
+  --level-slot-image: url('../images/level_slot_1.png');
+  --level-slot-connection-image: url('../images/level_slot_connection_1.png');
+  --heart-slot-image: url('../images/heart_slot_1.png');
 }
 
 * {
@@ -32,6 +35,24 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
+}
+
+body[data-level-skin='2'] {
+  --level-slot-image: url('../images/level_slot_2.png');
+  --level-slot-connection-image: url('../images/level_slot_connection_2.png');
+  --heart-slot-image: url('../images/heart_slot_2.png');
+}
+
+body[data-level-skin='3'] {
+  --level-slot-image: url('../images/level_slot_3.png');
+  --level-slot-connection-image: url('../images/level_slot_connection_3.png');
+  --heart-slot-image: url('../images/heart_slot_3.png');
+}
+
+body[data-level-skin='4'] {
+  --level-slot-image: url('../images/level_slot_4.png');
+  --level-slot-connection-image: url('../images/level_slot_connection_4.png');
+  --heart-slot-image: url('../images/heart_slot_4.png');
 }
 
 .game-shell {
@@ -141,7 +162,7 @@ body {
   position: relative;
   width: 34px;
   height: 34px;
-  background: url('../images/heart_slot.png') center / contain no-repeat;
+  background: var(--heart-slot-image) center / contain no-repeat;
 }
 
 .life-heart::after {
@@ -173,7 +194,7 @@ body {
   width: 36px;
   height: 36px;
   border-radius: 0;
-  background: url('../images/level_slot.png') center / contain no-repeat;
+  background: var(--level-slot-image) center / contain no-repeat;
   border: 0;
   transition: transform 0.2s ease, filter 0.2s ease;
 }
@@ -186,7 +207,7 @@ body {
   width: 14px;
   height: 11px;
   transform: translateY(-50%);
-  background: url('../images/level_slot_connection.png') center / contain no-repeat;
+  background: var(--level-slot-connection-image) center / contain no-repeat;
   pointer-events: none;
 }
 
