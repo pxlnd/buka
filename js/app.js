@@ -300,6 +300,7 @@ let sawShadowImageLoadPromise = null;
 let tutorialPointerImageLoadPromise = null;
 const uiSkinAvailabilityCache = new Map();
 let uiSkinApplyToken = 0;
+let pendingExternalLevelNumber = null;
 const activeTutorialPointers = new Set();
 
 function clamp(value, min, max) {
@@ -1357,6 +1358,12 @@ function setStageLoaderVisible(isVisible) {
   stageLoader.hidden = !isVisible;
 }
 
+function trackStageEventForUniWebView(eventActionPrefix) {
+  const levelNumber = clamp(Number(currentLevel()?.number) || 1, 1, 9999);
+  const stageNumber = clamp(Number(state.stageIndex) + 1 || 1, 1, STAGES_PER_LEVEL);
+  window.location.href = `uniwebview://track?event=stage&event_action=${eventActionPrefix}_${levelNumber}_${stageNumber}`;
+}
+
 function preloadStageImage(path) {
   const imagePath = normalizeStageImagePath(path, '');
   if (!imagePath) {
@@ -1747,6 +1754,7 @@ async function completeStageLoad(token) {
     state.isStageLoading = false;
     setStageLoaderVisible(false);
     state.stageLocked = false;
+    trackStageEventForUniWebView('started');
   }
 }
 
@@ -2290,6 +2298,7 @@ function updateVictoryAnimation(timestamp) {
 
   if (progress < 1) return;
 
+  trackStageEventForUniWebView('completed');
   clearVictoryAnimation();
   nextStageOrLevel();
 }
@@ -5723,8 +5732,13 @@ function handleEditorPointerUp() {
   }
 }
 
+function sendTapScreenEvent() {
+  window.location.href = "uniwebview://track?event=tap&event_action=screen";
+}
+
 function onAnyPointerDown(evt) {
   markTutorialInteractionStart(evt?.pointerId);
+  sendTapScreenEvent();
 }
 
 function onAnyPointerUp(evt) {
@@ -5902,6 +5916,78 @@ function findLevelIndexByNumber(number) {
   return state.levels.findIndex((level) => level.number === number);
 }
 
+function normalizeRequestedLevelNumber(levelNumber) {
+  return clamp(Number(levelNumber) || 1, 1, 9999);
+}
+
+function resolveLevelIndexForRequest(requestedLevelNumber, { wrapIfMissing = false } = {}) {
+  if (!state.levels.length) return -1;
+
+  const exactIndex = findLevelIndexByNumber(requestedLevelNumber);
+  if (exactIndex >= 0) return exactIndex;
+  if (!wrapIfMissing) return -1;
+
+  const cycleIndex = (requestedLevelNumber - 1) % state.levels.length;
+  return clamp(cycleIndex, 0, state.levels.length - 1);
+}
+
+function startLevelByNumber(levelNumber, {
+  queueIfUnavailable = false,
+  showStatus = false,
+  wrapIfMissing = false
+} = {}) {
+  const requested = normalizeRequestedLevelNumber(levelNumber);
+
+  if (!state.levels.length) {
+    if (queueIfUnavailable) {
+      pendingExternalLevelNumber = requested;
+      if (showStatus) {
+        setDebugStatus(`Запрошен LEVEL ${requested}. Запущу после инициализации.`);
+      }
+      return true;
+    }
+
+    if (showStatus) {
+      setDebugStatus('Уровни еще не загружены.', true);
+    }
+    return false;
+  }
+
+  const index = resolveLevelIndexForRequest(requested, { wrapIfMissing });
+  if (index < 0) {
+    if (showStatus) {
+      setDebugStatus(`LEVEL ${requested} не найден.`, true);
+    }
+    return false;
+  }
+
+  const loadedLevelNumber = Number(state.levels[index]?.number) || requested;
+  pendingExternalLevelNumber = null;
+  loadStage(index, 0);
+  if (showStatus) {
+    if (loadedLevelNumber === requested) {
+      setDebugStatus(`Загружен LEVEL ${requested}.`);
+    } else if (wrapIfMissing) {
+      setDebugStatus(`LEVEL ${requested} не найден. Загружен LEVEL ${loadedLevelNumber} (циклически).`);
+    } else {
+      setDebugStatus(`Загружен LEVEL ${loadedLevelNumber}.`);
+    }
+  }
+  return true;
+}
+
+function setLevel(levelNumber) {
+  return startLevelByNumber(levelNumber, {
+    queueIfUnavailable: true,
+    showStatus: true,
+    wrapIfMissing: true
+  });
+}
+
+if (typeof window !== 'undefined') {
+  window.setLevel = setLevel;
+}
+
 function insertNewLevel(level) {
   state.levels.push(level);
   state.levels.sort((a, b) => a.number - b.number);
@@ -6051,16 +6137,7 @@ function bindUi() {
   });
 
   debugLoadLevelBtn.addEventListener('click', () => {
-    const requested = clamp(Number(debugLevelNumber.value) || 1, 1, 9999);
-    const index = findLevelIndexByNumber(requested);
-
-    if (index < 0) {
-      setDebugStatus(`LEVEL ${requested} не найден.`, true);
-      return;
-    }
-
-    loadStage(index, 0);
-    setDebugStatus(`Загружен LEVEL ${requested}.`);
+    startLevelByNumber(debugLevelNumber.value, { showStatus: true });
   });
 
   debugNewLevelBtn.addEventListener('click', () => {
@@ -6621,7 +6698,20 @@ async function init() {
     state.levels = [makeBlankLevel(1)];
   }
 
-  loadStage(0, 0);
+  let initialLevelIndex = 0;
+  if (pendingExternalLevelNumber != null) {
+    const pendingIndex = resolveLevelIndexForRequest(pendingExternalLevelNumber, {
+      wrapIfMissing: true
+    });
+    if (pendingIndex >= 0) {
+      initialLevelIndex = pendingIndex;
+    } else {
+      setDebugStatus(`LEVEL ${pendingExternalLevelNumber} не найден. Загружен первый доступный уровень.`, true);
+    }
+    pendingExternalLevelNumber = null;
+  }
+
+  loadStage(initialLevelIndex, 0);
   resizeCanvas();
   requestAnimationFrame(frame);
 }
