@@ -75,6 +75,7 @@ const TUTORIAL_PRESS_MS = 280;
 const TUTORIAL_DRAG_MS = 860;
 const TUTORIAL_RELEASE_MS = 280;
 const TUTORIAL_PAUSE_MS = 420;
+const TUTORIAL_POINTER_FADE_OUT_MS = 300;
 const TUTORIAL_CYCLE_MS = (
   TUTORIAL_HOLD_MS
   + TUTORIAL_PRESS_MS
@@ -82,6 +83,8 @@ const TUTORIAL_CYCLE_MS = (
   + TUTORIAL_RELEASE_MS
   + TUTORIAL_PAUSE_MS
 );
+const TUTORIAL_CYCLE_GAP_MS = 200;
+const TUTORIAL_LOOP_MS = TUTORIAL_CYCLE_MS + TUTORIAL_CYCLE_GAP_MS;
 const TUTORIAL_PULL_MIN = 10;
 const TUTORIAL_PULL_MAX = 60;
 const STAGE_TRANSITION_FADE_IN_MS = 220;
@@ -1827,10 +1830,12 @@ function computeTutorialPose(localMs) {
   let pullY = 0;
   let showAim = false;
   let visible = true;
+  let pointerAlpha = 1;
 
   if (localMs < holdEnd) {
     return {
       visible,
+      pointerAlpha,
       pointerX,
       pointerY,
       pointerScale,
@@ -1847,6 +1852,7 @@ function computeTutorialPose(localMs) {
     showAim = true;
     return {
       visible,
+      pointerAlpha,
       pointerX,
       pointerY,
       pointerScale,
@@ -1864,6 +1870,7 @@ function computeTutorialPose(localMs) {
     showAim = true;
     return {
       visible,
+      pointerAlpha,
       pointerX,
       pointerY,
       pointerScale,
@@ -1881,6 +1888,26 @@ function computeTutorialPose(localMs) {
     showAim = pullY > 2;
     return {
       visible,
+      pointerAlpha,
+      pointerX,
+      pointerY,
+      pointerScale,
+      pullX,
+      pullY,
+      showAim
+    };
+  }
+
+  const pauseMs = Math.max(0, localMs - releaseEnd);
+  const fadeDuration = Math.max(
+    1,
+    Math.min(TUTORIAL_POINTER_FADE_OUT_MS, TUTORIAL_PAUSE_MS)
+  );
+  if (pauseMs < fadeDuration) {
+    pointerAlpha = 1 - (pauseMs / fadeDuration);
+    return {
+      visible,
+      pointerAlpha,
       pointerX,
       pointerY,
       pointerScale,
@@ -1891,8 +1918,10 @@ function computeTutorialPose(localMs) {
   }
 
   visible = false;
+  pointerAlpha = 0;
   return {
     visible,
+    pointerAlpha,
     pointerX,
     pointerY,
     pointerScale,
@@ -1926,7 +1955,10 @@ function updateTutorialState(timestamp) {
   }
 
   const elapsed = timestamp - state.tutorial.cycleStartedAt;
-  const localMs = elapsed % TUTORIAL_CYCLE_MS;
+  const localMs = elapsed % TUTORIAL_LOOP_MS;
+  if (localMs >= TUTORIAL_CYCLE_MS) {
+    return;
+  }
   state.tutorial.pose = computeTutorialPose(localMs);
 }
 
@@ -5089,12 +5121,14 @@ function drawTutorialAim() {
 
 function drawTutorialPointer() {
   const pose = state.tutorial.pose;
-  if (!pose || !pose.visible) return;
+  const pointerAlpha = clamp(Number(pose?.pointerAlpha) || 0, 0, 1);
+  if (!pose || !pose.visible || pointerAlpha <= 0.001) return;
 
   const size = state.ball.r * 2.5;
   const half = size * 0.5;
 
   ctx.save();
+  ctx.globalAlpha = pointerAlpha;
   ctx.translate(pose.pointerX + 10, pose.pointerY + 10);
   ctx.scale(pose.pointerScale, pose.pointerScale);
 
