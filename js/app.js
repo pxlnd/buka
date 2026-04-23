@@ -65,6 +65,7 @@ const SAW_DEATH_ANIMATION_MS = 500;
 const SAW_DEATH_PARTICLE_CAP = 34;
 const VICTORY_ANIMATION_MS = 500;
 const VICTORY_PARTICLE_CAP = 100;
+const VICTORY_STAR_CAP = 26;
 const WRONG_GATE_ANIMATION_MS = 500;
 const WRONG_GATE_PARTICLE_CAP = 70;
 const UI_SKIN_FALLBACK_LEVEL = 1;
@@ -83,6 +84,9 @@ const TUTORIAL_CYCLE_MS = (
 );
 const TUTORIAL_PULL_MIN = 10;
 const TUTORIAL_PULL_MAX = 60;
+const STAGE_TRANSITION_FADE_IN_MS = 220;
+const STAGE_TRANSITION_FADE_OUT_MS = 240;
+const STAGE_TRANSITION_EASING = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
 
 const COLOR_TOKENS = {
   yellow: '#f6c531',
@@ -129,6 +133,7 @@ const quitQuitBtn = document.getElementById('quit-quit');
 const loseOverlay = document.getElementById('loseOverlay');
 const loseRetryBtn = document.getElementById('loseRetryBtn');
 const stageLoader = document.getElementById('stageLoader');
+const stageTransitionFade = document.getElementById('stageTransitionFade');
 
 const debugCloseBtn = document.getElementById('debugCloseBtn');
 const debugPanel = document.getElementById('debugPanel');
@@ -243,7 +248,8 @@ const state = {
     vx: 0,
     vy: 0,
     moving: false,
-    renderScale: 1
+    renderScale: 1,
+    hidden: false
   },
   dragging: false,
   pull: { x: 0, y: 0 },
@@ -260,7 +266,9 @@ const state = {
     startedAt: 0,
     durationMs: VICTORY_ANIMATION_MS,
     ballAlpha: 1,
-    particles: []
+    particles: [],
+    stars: [],
+    glowColor: '#ffffff'
   },
   wrongGate: {
     active: false,
@@ -313,6 +321,10 @@ let timeOutCoinsCost = 0;
 let livesTimer = '--:--';
 let subscriptionStatus = true;
 const activeTutorialPointers = new Set();
+let stageTransitionToken = 0;
+let stageTransitionCommitTimeoutId = 0;
+let stageTransitionHideTimeoutId = 0;
+let activeStageTransitionToken = 0;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -1406,6 +1418,90 @@ function setStageLoaderVisible(isVisible) {
   stageLoader.hidden = !isVisible;
 }
 
+function clearStageTransitionTimers() {
+  if (stageTransitionCommitTimeoutId) {
+    clearTimeout(stageTransitionCommitTimeoutId);
+    stageTransitionCommitTimeoutId = 0;
+  }
+  if (stageTransitionHideTimeoutId) {
+    clearTimeout(stageTransitionHideTimeoutId);
+    stageTransitionHideTimeoutId = 0;
+  }
+}
+
+function resetStageTransitionFade() {
+  if (!stageTransitionFade) return;
+  clearStageTransitionTimers();
+  stageTransitionFade.classList.remove('is-visible');
+  stageTransitionFade.hidden = true;
+  activeStageTransitionToken = 0;
+}
+
+function abortPendingStageTransition() {
+  if (!stageTransitionFade) return;
+  stageTransitionToken += 1;
+  resetStageTransitionFade();
+}
+
+function beginStageTransitionFadeIn() {
+  if (!stageTransitionFade) return 0;
+
+  clearStageTransitionTimers();
+  stageTransitionToken += 1;
+  const token = stageTransitionToken;
+  activeStageTransitionToken = token;
+
+  stageTransitionFade.hidden = false;
+  stageTransitionFade.style.transitionDuration = `${STAGE_TRANSITION_FADE_IN_MS}ms`;
+  stageTransitionFade.style.transitionTimingFunction = STAGE_TRANSITION_EASING;
+  stageTransitionFade.classList.remove('is-visible');
+  void stageTransitionFade.offsetWidth;
+  if (!stageTransitionFade || token !== stageTransitionToken) return 0;
+  stageTransitionFade.classList.add('is-visible');
+
+  return token;
+}
+
+function finishStageTransitionFadeOut(token = activeStageTransitionToken) {
+  if (!stageTransitionFade) return;
+  if (!token || token !== stageTransitionToken) return;
+
+  clearStageTransitionTimers();
+  stageTransitionFade.style.transitionDuration = `${STAGE_TRANSITION_FADE_OUT_MS}ms`;
+  stageTransitionFade.style.transitionTimingFunction = STAGE_TRANSITION_EASING;
+  stageTransitionFade.classList.remove('is-visible');
+
+  stageTransitionHideTimeoutId = window.setTimeout(() => {
+    if (!stageTransitionFade || token !== stageTransitionToken) return;
+    stageTransitionFade.hidden = true;
+    activeStageTransitionToken = 0;
+    stageTransitionHideTimeoutId = 0;
+  }, STAGE_TRANSITION_FADE_OUT_MS);
+}
+
+function loadStageWithTransition(levelIndex, stageIndex, options = {}) {
+  if (!stageTransitionFade) {
+    loadStage(levelIndex, stageIndex, options);
+    return;
+  }
+
+  const token = beginStageTransitionFadeIn();
+  if (!token) {
+    loadStage(levelIndex, stageIndex, options);
+    return;
+  }
+
+  stageTransitionCommitTimeoutId = window.setTimeout(() => {
+    stageTransitionCommitTimeoutId = 0;
+    if (token !== stageTransitionToken) return;
+    loadStage(levelIndex, stageIndex, {
+      ...options,
+      fromStageTransition: true,
+      transitionToken: token
+    });
+  }, STAGE_TRANSITION_FADE_IN_MS);
+}
+
 function trackStageEventForUniWebView(eventActionPrefix) {
   const levelNumber = clamp(Number(currentLevel()?.number) || 1, 1, 9999);
   const stageNumber = clamp(Number(state.stageIndex) + 1 || 1, 1, STAGES_PER_LEVEL);
@@ -1857,6 +1953,7 @@ async function completeStageLoad(token) {
     });
     state.isStageLoading = false;
     setStageLoaderVisible(false);
+    finishStageTransitionFadeOut(activeStageTransitionToken);
     state.stageLocked = false;
     trackStageEventForUniWebView('started');
   }
@@ -2180,6 +2277,7 @@ function syncBallWithStage() {
   state.ball.vy = 0;
   state.ball.moving = false;
   state.ball.renderScale = 1;
+  state.ball.hidden = false;
   state.ball.colorToken = stage.ballColor;
   state.ball.color = colorValue(stage.ballColor);
 }
@@ -2197,6 +2295,8 @@ function clearVictoryAnimation() {
   state.victory.startedAt = 0;
   state.victory.ballAlpha = 1;
   state.victory.particles = [];
+  state.victory.stars = [];
+  state.victory.glowColor = '#ffffff';
   state.ball.renderScale = 1;
 }
 
@@ -2209,6 +2309,7 @@ function clearWrongGateAnimation() {
 }
 
 function beginVictoryAnimation(gate) {
+  state.ball.hidden = false;
   const originX = state.ball.x;
   const originY = state.ball.y;
   const ballRadius = Math.max(2, state.ball.r);
@@ -2216,6 +2317,7 @@ function beginVictoryAnimation(gate) {
   const segment = gateSegment(gate);
   const gateColor = colorValue(gate.color);
   const particles = [];
+  const stars = [];
   const ballParticleCount = clamp(
     Math.round(burstRadius * 1.45),
     16,
@@ -2240,6 +2342,38 @@ function beginVictoryAnimation(gate) {
       delayMs: Math.random() * 80,
       size,
       alpha: 0.55 + Math.random() * 0.45,
+      color: shadeColor(gateColor, shade),
+      glowColor: shadeColor(gateColor, glow)
+    });
+  }
+
+  const starCount = clamp(
+    Math.round(burstRadius * 0.46),
+    12,
+    VICTORY_STAR_CAP
+  );
+  for (let i = 0; i < starCount; i += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const spawnOffset = burstRadius * (0.15 + Math.random() * 0.45);
+    const speed = burstRadius * (3.1 + Math.random() * 4.6);
+    const drift = (Math.random() - 0.5) * burstRadius * 2.4;
+    const size = Math.max(2, burstRadius * (0.17 + Math.random() * 0.22));
+    const shade = Math.round(22 + Math.random() * 92);
+    const glow = Math.round(48 + Math.random() * 98);
+
+    stars.push({
+      x: originX + Math.cos(angle) * spawnOffset,
+      y: originY + Math.sin(angle) * spawnOffset,
+      vx: Math.cos(angle) * speed + drift * 0.3,
+      vy: Math.sin(angle) * speed - burstRadius * (0.9 + Math.random() * 1.4),
+      gravity: burstRadius * (8 + Math.random() * 12),
+      delayMs: Math.random() * 130,
+      size,
+      alpha: 0.58 + Math.random() * 0.36,
+      twinkleHz: 0.014 + Math.random() * 0.02,
+      twinkleOffset: Math.random() * Math.PI * 2,
+      rotation: Math.random() * Math.PI * 2,
+      spin: (Math.random() - 0.5) * (Math.PI * 2.4),
       color: shadeColor(gateColor, shade),
       glowColor: shadeColor(gateColor, glow)
     });
@@ -2292,10 +2426,13 @@ function beginVictoryAnimation(gate) {
   state.victory.durationMs = VICTORY_ANIMATION_MS;
   state.victory.ballAlpha = 1;
   state.victory.particles = particles;
+  state.victory.stars = stars;
+  state.victory.glowColor = gateColor;
   state.ball.renderScale = 1;
 }
 
 function beginWrongGateAnimation(gate) {
+  state.ball.hidden = false;
   const originX = state.ball.x;
   const originY = state.ball.y;
   const ballRadius = Math.max(2, state.ball.r);
@@ -2336,6 +2473,7 @@ function beginWrongGateAnimation(gate) {
 }
 
 function beginSawDeathAnimation() {
+  state.ball.hidden = false;
   const originX = state.ball.x;
   const originY = state.ball.y;
   const ballRadius = Math.max(2, state.ball.r);
@@ -2385,6 +2523,7 @@ function updateSawDeathAnimation(timestamp) {
   state.ball.vx = 0;
   state.ball.vy = 0;
   state.ball.renderScale = 1;
+  state.ball.hidden = true;
   if (tryConsumeLifeAndReplayStage()) return;
   showLoseOverlay();
 }
@@ -2404,6 +2543,7 @@ function updateVictoryAnimation(timestamp) {
 
   trackStageEventForUniWebView('completed');
   clearVictoryAnimation();
+  state.ball.hidden = true;
   nextStageOrLevel();
 }
 
@@ -2428,6 +2568,7 @@ function updateWrongGateAnimation(timestamp) {
   state.ball.vx = 0;
   state.ball.vy = 0;
   state.ball.renderScale = 1;
+  state.ball.hidden = true;
   if (tryConsumeLifeAndReplayStage()) return;
   showLoseOverlay();
 }
@@ -3907,8 +4048,22 @@ function loadStage(levelIndex, stageIndex, options = {}) {
   const {
     preserveLives = false,
     forceRefillLives = false,
-    displayLevelNumber
+    displayLevelNumber,
+    fromStageTransition = false,
+    transitionToken = 0
   } = options;
+  if (!fromStageTransition) {
+    abortPendingStageTransition();
+  }
+
+  const isTransitionLoad = (
+    fromStageTransition
+    && Number.isInteger(transitionToken)
+    && transitionToken > 0
+    && transitionToken === stageTransitionToken
+  );
+  activeStageTransitionToken = isTransitionLoad ? transitionToken : 0;
+
   const loadToken = state.stageLoadToken + 1;
   state.stageLoadToken = loadToken;
   state.isStageLoading = true;
@@ -3969,7 +4124,7 @@ function restartLevel() {
 
 function nextStageOrLevel() {
   if (state.stageIndex < STAGES_PER_LEVEL - 1) {
-    loadStage(state.levelIndex, state.stageIndex + 1);
+    loadStageWithTransition(state.levelIndex, state.stageIndex + 1);
     return;
   }
   completeLevelViaUniWebViewWithResources();
@@ -4085,6 +4240,7 @@ function onHoleCaptured(hole) {
       return;
     }
 
+    state.ball.hidden = true;
     if (tryConsumeLifeAndReplayStage()) return;
     showLoseOverlay();
   };
@@ -4676,12 +4832,39 @@ function drawSawDeathParticles() {
 }
 
 function drawVictoryParticles() {
-  if (!state.victory.active || !state.victory.particles.length) return;
+  if (
+    !state.victory.active
+    || (!state.victory.particles.length && !state.victory.stars.length)
+  ) return;
 
   const elapsed = Math.max(0, performance.now() - state.victory.startedAt);
   const duration = Math.max(1, state.victory.durationMs);
+  const overallProgress = clamp(elapsed / duration, 0, 1);
+  const glowFade = 1 - overallProgress;
+  const glowColor = normalizeHexColor(state.victory.glowColor, '#ffffff');
+  const pulse = 0.82 + Math.sin(overallProgress * Math.PI * 5) * 0.18;
 
   ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+
+  const glowRadius = state.ball.r * (2.3 + overallProgress * 4.6);
+  const glow = ctx.createRadialGradient(
+    state.ball.x,
+    state.ball.y,
+    state.ball.r * 0.2,
+    state.ball.x,
+    state.ball.y,
+    glowRadius
+  );
+  glow.addColorStop(0, hexToRgba(glowColor, 0.38 * glowFade * pulse));
+  glow.addColorStop(0.42, hexToRgba(glowColor, 0.24 * glowFade));
+  glow.addColorStop(1, hexToRgba(glowColor, 0));
+
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.arc(state.ball.x, state.ball.y, glowRadius, 0, Math.PI * 2);
+  ctx.fillStyle = glow;
+  ctx.fill();
 
   for (const particle of state.victory.particles) {
     const localElapsed = Math.max(0, elapsed - particle.delayMs);
@@ -4705,6 +4888,43 @@ function drawVictoryParticles() {
     ctx.arc(px - size * 0.22, py - size * 0.22, size * 0.46, 0, Math.PI * 2);
     ctx.fillStyle = particle.glowColor;
     ctx.fill();
+  }
+
+  for (const star of state.victory.stars) {
+    const localElapsed = Math.max(0, elapsed - star.delayMs);
+    const progress = clamp(localElapsed / duration, 0, 1);
+    if (progress <= 0 || progress >= 1) continue;
+
+    const timeSec = localElapsed / 1000;
+    const px = star.x + star.vx * timeSec;
+    const py = star.y + star.vy * timeSec + 0.5 * star.gravity * timeSec * timeSec;
+    const baseSize = Math.max(1.2, star.size * (1 - progress * 0.78));
+    const twinkle = 0.56 + 0.44 * Math.sin(localElapsed * star.twinkleHz + star.twinkleOffset);
+    const alpha = (1 - progress) * star.alpha * twinkle;
+    const rotation = star.rotation + star.spin * timeSec;
+
+    const drawStar = (radius, color, localAlpha) => {
+      const innerRadius = Math.max(0.7, radius * 0.45);
+      ctx.globalAlpha = localAlpha;
+      ctx.beginPath();
+      for (let i = 0; i < 10; i += 1) {
+        const angle = rotation - Math.PI / 2 + i * (Math.PI / 5);
+        const r = i % 2 === 0 ? radius : innerRadius;
+        const sx = px + Math.cos(angle) * r;
+        const sy = py + Math.sin(angle) * r;
+        if (i === 0) {
+          ctx.moveTo(sx, sy);
+        } else {
+          ctx.lineTo(sx, sy);
+        }
+      }
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+    };
+
+    drawStar(baseSize * 1.42, star.glowColor, alpha * 0.42);
+    drawStar(baseSize, star.color, alpha);
   }
 
   ctx.restore();
@@ -4746,7 +4966,7 @@ function drawWrongGateParticles() {
 }
 
 function drawBall(pulse = 0, pulseColor = '#fff', opacity = 1) {
-  if (state.sawDeath.active) return;
+  if (state.sawDeath.active || state.ball.hidden) return;
   drawReferenceBall(pulse, pulseColor, opacity);
 }
 
@@ -6299,6 +6519,7 @@ function bindUi() {
   fillColorSelect(debugGateColor);
   hydrateQuitOverlayAssets();
   hideQuitOverlay();
+  resetStageTransitionFade();
 
   restartBtn.addEventListener('click', restartLevel);
   if (loseRetryBtn) loseRetryBtn.addEventListener('click', () => {
@@ -6955,5 +7176,6 @@ async function init() {
 }
 
 init().catch((error) => {
+  resetStageTransitionFade();
   setDebugStatus(`Ошибка инициализации: ${error.message}`, true);
 });

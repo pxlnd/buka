@@ -60,6 +60,20 @@ body[data-level-skin='4'] {
   --heart-slot-image: url('../images/heart_slot_4.png');
 }
 
+.stage-transition-fade {
+  position: fixed;
+  inset: 0;
+  background: #000000;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 100001;
+  transition: opacity 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.stage-transition-fade.is-visible {
+  opacity: 1;
+}
+
 #quit-overlay {
     position: fixed;
     inset: 0;
