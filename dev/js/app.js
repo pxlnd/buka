@@ -1,3 +1,5 @@
+import { createGameAudioSystem } from './audio-system.js';
+
 const STAGES_PER_LEVEL = 5;
 const LIVES_PER_STAGE = 3;
 const DEFAULT_LEVEL_VISUALS = Object.freeze({
@@ -75,6 +77,7 @@ const TUTORIAL_PRESS_MS = 280;
 const TUTORIAL_DRAG_MS = 860;
 const TUTORIAL_RELEASE_MS = 280;
 const TUTORIAL_PAUSE_MS = 420;
+const TUTORIAL_POINTER_FADE_OUT_MS = 300;
 const TUTORIAL_CYCLE_MS = (
   TUTORIAL_HOLD_MS
   + TUTORIAL_PRESS_MS
@@ -82,6 +85,8 @@ const TUTORIAL_CYCLE_MS = (
   + TUTORIAL_RELEASE_MS
   + TUTORIAL_PAUSE_MS
 );
+const TUTORIAL_CYCLE_GAP_MS = 200;
+const TUTORIAL_LOOP_MS = TUTORIAL_CYCLE_MS + TUTORIAL_CYCLE_GAP_MS;
 const TUTORIAL_PULL_MIN = 10;
 const TUTORIAL_PULL_MAX = 60;
 const STAGE_TRANSITION_FADE_IN_MS = 220;
@@ -333,6 +338,7 @@ let stageTransitionToken = 0;
 let stageTransitionCommitTimeoutId = 0;
 let stageTransitionHideTimeoutId = 0;
 let activeStageTransitionToken = 0;
+const gameAudio = createGameAudioSystem();
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -1827,10 +1833,12 @@ function computeTutorialPose(localMs) {
   let pullY = 0;
   let showAim = false;
   let visible = true;
+  let pointerAlpha = 1;
 
   if (localMs < holdEnd) {
     return {
       visible,
+      pointerAlpha,
       pointerX,
       pointerY,
       pointerScale,
@@ -1847,6 +1855,7 @@ function computeTutorialPose(localMs) {
     showAim = true;
     return {
       visible,
+      pointerAlpha,
       pointerX,
       pointerY,
       pointerScale,
@@ -1864,6 +1873,7 @@ function computeTutorialPose(localMs) {
     showAim = true;
     return {
       visible,
+      pointerAlpha,
       pointerX,
       pointerY,
       pointerScale,
@@ -1881,6 +1891,26 @@ function computeTutorialPose(localMs) {
     showAim = pullY > 2;
     return {
       visible,
+      pointerAlpha,
+      pointerX,
+      pointerY,
+      pointerScale,
+      pullX,
+      pullY,
+      showAim
+    };
+  }
+
+  const pauseMs = Math.max(0, localMs - releaseEnd);
+  const fadeDuration = Math.max(
+    1,
+    Math.min(TUTORIAL_POINTER_FADE_OUT_MS, TUTORIAL_PAUSE_MS)
+  );
+  if (pauseMs < fadeDuration) {
+    pointerAlpha = 1 - (pauseMs / fadeDuration);
+    return {
+      visible,
+      pointerAlpha,
       pointerX,
       pointerY,
       pointerScale,
@@ -1891,8 +1921,10 @@ function computeTutorialPose(localMs) {
   }
 
   visible = false;
+  pointerAlpha = 0;
   return {
     visible,
+    pointerAlpha,
     pointerX,
     pointerY,
     pointerScale,
@@ -1926,7 +1958,10 @@ function updateTutorialState(timestamp) {
   }
 
   const elapsed = timestamp - state.tutorial.cycleStartedAt;
-  const localMs = elapsed % TUTORIAL_CYCLE_MS;
+  const localMs = elapsed % TUTORIAL_LOOP_MS;
+  if (localMs >= TUTORIAL_CYCLE_MS) {
+    return;
+  }
   state.tutorial.pose = computeTutorialPose(localMs);
 }
 
@@ -3593,6 +3628,8 @@ function hideLoseOverlay() {
 }
 
 function showLoseOverlay() {
+  gameAudio.playFail();
+
   const screen = syncLoseScreenState();
   if (screen) {
     screen.show();
@@ -4157,6 +4194,7 @@ function nextStageOrLevel() {
 function reflectByNormal(nx, ny) {
   const speedAlongNormal = state.ball.vx * nx + state.ball.vy * ny;
   if (speedAlongNormal < 0) {
+    gameAudio.playWallCollision(-speedAlongNormal);
     state.ball.vx -= 2 * speedAlongNormal * nx;
     state.ball.vy -= 2 * speedAlongNormal * ny;
   }
@@ -4167,6 +4205,7 @@ function reflectByNormal(nx, ny) {
 function onCorrectGate(gate) {
   if (state.stageLocked) return;
 
+  gameAudio.playWin();
   state.stageLocked = true;
   state.dragging = false;
   state.pull.x = 0;
@@ -5089,12 +5128,14 @@ function drawTutorialAim() {
 
 function drawTutorialPointer() {
   const pose = state.tutorial.pose;
-  if (!pose || !pose.visible) return;
+  const pointerAlpha = clamp(Number(pose?.pointerAlpha) || 0, 0, 1);
+  if (!pose || !pose.visible || pointerAlpha <= 0.001) return;
 
   const size = state.ball.r * 2.5;
   const half = size * 0.5;
 
   ctx.save();
+  ctx.globalAlpha = pointerAlpha;
   ctx.translate(pose.pointerX + 10, pose.pointerY + 10);
   ctx.scale(pose.pointerScale, pose.pointerScale);
 
@@ -6267,6 +6308,8 @@ function onPointerUp(evt) {
 
   if (force < 7) return;
 
+  gameAudio.playThrow();
+
   const speed = state.commonSettings.physics.impulse;
   state.ball.vx = launchX * speed;
   state.ball.vy = launchY * speed;
@@ -7237,6 +7280,7 @@ function bindUi() {
 
 async function init() {
   bindUi();
+  gameAudio.preload();
   setCommonSettings(await loadCommonSettings());
 
   state.levels = await loadLevelsFromJson();
