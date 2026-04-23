@@ -87,6 +87,11 @@ const TUTORIAL_PULL_MAX = 60;
 const STAGE_TRANSITION_FADE_IN_MS = 220;
 const STAGE_TRANSITION_FADE_OUT_MS = 240;
 const STAGE_TRANSITION_EASING = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
+const ARENA_ASPECT_RATIO = 0.85;
+const ARENA_MIN_SIDE_PADDING = 14;
+const ARENA_SIDE_PADDING_RATIO = 0.04;
+const ARENA_TOP_GAP = 12;
+const ARENA_MIN_BOTTOM_PADDING = 16;
 
 const COLOR_TOKENS = {
   yellow: '#f6c531',
@@ -134,6 +139,9 @@ const loseOverlay = document.getElementById('loseOverlay');
 const loseRetryBtn = document.getElementById('loseRetryBtn');
 const stageLoader = document.getElementById('stageLoader');
 const stageTransitionFade = document.getElementById('stageTransitionFade');
+const gameHeader = document.querySelector('.game-header');
+const progressWrap = document.querySelector('.progress-wrap');
+const livesWrap = document.querySelector('.lives-wrap');
 
 const debugCloseBtn = document.getElementById('debugCloseBtn');
 const debugPanel = document.getElementById('debugPanel');
@@ -1400,6 +1408,9 @@ function applyLevelVisualSettings(level = null) {
   const visuals = currentLevelVisualSettings(level);
   state.levelVisuals = visuals;
   document.documentElement.style.setProperty('--level-bg', visuals.background);
+  if (canvas) {
+    canvas.style.backgroundColor = visuals.background;
+  }
 }
 
 function currentStageImagePath(level = null, stage = null, stageIndex = state.stageIndex) {
@@ -1416,6 +1427,19 @@ function currentStageImagePath(level = null, stage = null, stageIndex = state.st
 function setStageLoaderVisible(isVisible) {
   if (!stageLoader) return;
   stageLoader.hidden = !isVisible;
+}
+
+function hudBottomOffset() {
+  if (!state.canvasRect) return 0;
+
+  const canvasTop = Number(state.canvasRect.top) || 0;
+  const hudBottom = Math.max(
+    Number(gameHeader?.getBoundingClientRect?.().bottom) || 0,
+    Number(progressWrap?.getBoundingClientRect?.().bottom) || 0,
+    Number(livesWrap?.getBoundingClientRect?.().bottom) || 0
+  );
+
+  return Math.max(0, hudBottom - canvasTop);
 }
 
 function clearStageTransitionTimers() {
@@ -2259,7 +2283,7 @@ function rebuildWorldSaws() {
 }
 
 function updateBallRadiusFromCanvas() {
-  const width = Number(state.canvasRect?.width);
+  const width = Number(state.arena?.w) || Number(state.canvasRect?.width);
   if (!Number.isFinite(width) || width <= 0) return;
 
   const ratio = normalizeBallRadiusRatio(state.commonSettings?.physics?.ballRadiusRatio);
@@ -4743,24 +4767,32 @@ function hexToRgba(hex, alpha = 1) {
 
 function drawReferenceBall(pulse = 0, pulseColor = '#fff', opacity = 1) {
   const scale = clamp(Number(state.ball.renderScale) || 1, 0.02, 1.2);
-  const radius = state.ball.r * scale + pulse * 7;
+  const requestedRadius = state.ball.r * scale + pulse * 7;
   const ringAlpha = 1 - pulse;
   const alpha = clamp(Number(opacity) || 1, 0, 1);
   if (alpha <= 0.001) return;
   const cx = state.ball.x;
   const cy = state.ball.y;
   const color = state.ball.color;
+  const sceneWidth = Number(state.canvasRect?.width) || (canvas.width / Math.max(1, state.dpr));
+  const sceneHeight = Number(state.canvasRect?.height) || (canvas.height / Math.max(1, state.dpr));
+  const edgeDistance = Math.min(cx, cy, sceneWidth - cx, sceneHeight - cy);
+  const edgePadding = 2;
+  const radius = Math.min(requestedRadius, Math.max(0, edgeDistance - edgePadding));
+  if (radius <= 0.6) return;
+  const radiusVisibility = clamp(radius / Math.max(1, requestedRadius), 0, 1);
+  const decorativeRadius = Math.min(radius * 1.07, Math.max(0, edgeDistance - 1.2));
 
   ctx.save();
-  ctx.globalAlpha = alpha;
+  ctx.globalAlpha = alpha * radiusVisibility;
 
   ctx.beginPath();
-  ctx.ellipse(cx, cy + radius * 0.5, radius * 1.04, radius * 0.9, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy + radius * 0.5, decorativeRadius, radius * 0.9, 0, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(34, 63, 182, 0.45)';
   ctx.fill();
 
   ctx.beginPath();
-  ctx.arc(cx, cy + radius * 0.16, radius * 1.07, 0, Math.PI * 2);
+  ctx.arc(cx, cy + radius * 0.16, decorativeRadius, 0, Math.PI * 2);
   ctx.fillStyle = shadeColor(color, -55);
   ctx.fill();
 
@@ -4784,11 +4816,21 @@ function drawReferenceBall(pulse = 0, pulseColor = '#fff', opacity = 1) {
   ctx.fill();
 
   if (pulse > 0) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, state.ball.r * scale + pulse * 20, 0, Math.PI * 2);
-    ctx.strokeStyle = `${pulseColor}${Math.round(ringAlpha * 210).toString(16).padStart(2, '0')}`;
-    ctx.lineWidth = 4;
-    ctx.stroke();
+    const requestedRingRadius = state.ball.r * scale + pulse * 20;
+    const safeRingRadius = Math.min(
+      requestedRingRadius,
+      Math.max(0, edgeDistance - 3.2)
+    );
+    if (safeRingRadius > radius + 0.4) {
+      const ringStrength = clamp(safeRingRadius / Math.max(1, requestedRingRadius), 0, 1);
+      const ringOpacity = clamp(ringAlpha * ringStrength, 0, 1);
+      const normalizedPulseColor = normalizeHexColor(pulseColor, '#ffffff');
+      ctx.beginPath();
+      ctx.arc(cx, cy, safeRingRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = hexToRgba(normalizedPulseColor, ringOpacity * 0.82);
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    }
   }
 
   ctx.restore();
@@ -4843,28 +4885,38 @@ function drawVictoryParticles() {
   const glowFade = 1 - overallProgress;
   const glowColor = normalizeHexColor(state.victory.glowColor, '#ffffff');
   const pulse = 0.82 + Math.sin(overallProgress * Math.PI * 5) * 0.18;
+  const sceneWidth = Number(state.canvasRect?.width) || (canvas.width / Math.max(1, state.dpr));
+  const sceneHeight = Number(state.canvasRect?.height) || (canvas.height / Math.max(1, state.dpr));
+  const distanceToCanvasEdge = (x, y) => Math.min(x, y, sceneWidth - x, sceneHeight - y);
 
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
 
-  const glowRadius = state.ball.r * (2.3 + overallProgress * 4.6);
-  const glow = ctx.createRadialGradient(
-    state.ball.x,
-    state.ball.y,
-    state.ball.r * 0.2,
-    state.ball.x,
-    state.ball.y,
-    glowRadius
-  );
-  glow.addColorStop(0, hexToRgba(glowColor, 0.38 * glowFade * pulse));
-  glow.addColorStop(0.42, hexToRgba(glowColor, 0.24 * glowFade));
-  glow.addColorStop(1, hexToRgba(glowColor, 0));
+  const requestedGlowRadius = state.ball.r * (2.3 + overallProgress * 4.6);
+  const ballEdgeDistance = distanceToCanvasEdge(state.ball.x, state.ball.y);
+  const glowEdgePadding = 2;
+  const maxGlowRadius = Math.max(0, ballEdgeDistance - glowEdgePadding);
+  const glowRadius = Math.min(requestedGlowRadius, maxGlowRadius);
+  if (glowRadius > 1) {
+    const glowStrength = clamp(glowRadius / Math.max(1, requestedGlowRadius), 0, 1);
+    const glow = ctx.createRadialGradient(
+      state.ball.x,
+      state.ball.y,
+      Math.min(state.ball.r * 0.2, glowRadius * 0.36),
+      state.ball.x,
+      state.ball.y,
+      glowRadius
+    );
+    glow.addColorStop(0, hexToRgba(glowColor, 0.38 * glowFade * pulse * glowStrength));
+    glow.addColorStop(0.42, hexToRgba(glowColor, 0.24 * glowFade * glowStrength));
+    glow.addColorStop(1, hexToRgba(glowColor, 0));
 
-  ctx.globalAlpha = 1;
-  ctx.beginPath();
-  ctx.arc(state.ball.x, state.ball.y, glowRadius, 0, Math.PI * 2);
-  ctx.fillStyle = glow;
-  ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(state.ball.x, state.ball.y, glowRadius, 0, Math.PI * 2);
+    ctx.fillStyle = glow;
+    ctx.fill();
+  }
 
   for (const particle of state.victory.particles) {
     const localElapsed = Math.max(0, elapsed - particle.delayMs);
@@ -4876,16 +4928,22 @@ function drawVictoryParticles() {
     const py = particle.y + particle.vy * timeSec + 0.5 * particle.gravity * timeSec * timeSec;
     const size = Math.max(0.8, particle.size * (1 - progress * 0.82));
     const alpha = (1 - progress) * particle.alpha;
+    const edgeDistance = distanceToCanvasEdge(px, py);
+    const safeSize = Math.min(size, Math.max(0, edgeDistance - 1.1));
+    if (safeSize <= 0.35) continue;
+    const sizeFactor = clamp(safeSize / Math.max(1, size), 0, 1);
+    const visibleAlpha = alpha * (sizeFactor ** 1.5);
+    if (visibleAlpha <= 0.004) continue;
 
-    ctx.globalAlpha = alpha;
+    ctx.globalAlpha = visibleAlpha;
     ctx.beginPath();
-    ctx.arc(px, py, size, 0, Math.PI * 2);
+    ctx.arc(px, py, safeSize, 0, Math.PI * 2);
     ctx.fillStyle = particle.color;
     ctx.fill();
 
-    ctx.globalAlpha = alpha * 0.68;
+    ctx.globalAlpha = visibleAlpha * 0.68;
     ctx.beginPath();
-    ctx.arc(px - size * 0.22, py - size * 0.22, size * 0.46, 0, Math.PI * 2);
+    ctx.arc(px - safeSize * 0.22, py - safeSize * 0.22, safeSize * 0.46, 0, Math.PI * 2);
     ctx.fillStyle = particle.glowColor;
     ctx.fill();
   }
@@ -4901,6 +4959,14 @@ function drawVictoryParticles() {
     const baseSize = Math.max(1.2, star.size * (1 - progress * 0.78));
     const twinkle = 0.56 + 0.44 * Math.sin(localElapsed * star.twinkleHz + star.twinkleOffset);
     const alpha = (1 - progress) * star.alpha * twinkle;
+    const edgeDistance = distanceToCanvasEdge(px, py);
+    const glowRadius = baseSize * 1.42;
+    const safeGlowRadius = Math.min(glowRadius, Math.max(0, edgeDistance - 1.2));
+    if (safeGlowRadius <= 0.6) continue;
+    const radiusFactor = clamp(safeGlowRadius / Math.max(1, glowRadius), 0, 1);
+    const safeBaseSize = baseSize * radiusFactor;
+    const visibleAlpha = alpha * (radiusFactor ** 1.35);
+    if (visibleAlpha <= 0.004) continue;
     const rotation = star.rotation + star.spin * timeSec;
 
     const drawStar = (radius, color, localAlpha) => {
@@ -4923,8 +4989,8 @@ function drawVictoryParticles() {
       ctx.fill();
     };
 
-    drawStar(baseSize * 1.42, star.glowColor, alpha * 0.42);
-    drawStar(baseSize, star.color, alpha);
+    drawStar(safeGlowRadius, star.glowColor, visibleAlpha * 0.42);
+    drawStar(safeBaseSize, star.color, visibleAlpha);
   }
 
   ctx.restore();
@@ -5448,7 +5514,13 @@ function drawEditorOverlay() {
 }
 
 function drawScene(pulse = 0, pulseColor = '#ffffff') {
+  const canvasBackground = normalizeHexColor(
+    state.levelVisuals?.background,
+    DEFAULT_LEVEL_VISUALS.background
+  );
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = canvasBackground;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (state.isStageLoading) return;
 
   ctx.save();
@@ -6208,11 +6280,28 @@ function resizeCanvas() {
   canvas.width = Math.floor(state.canvasRect.width * state.dpr);
   canvas.height = Math.floor(state.canvasRect.height * state.dpr);
 
-  const pad = Math.max(14, state.canvasRect.width * 0.044);
-  state.arena.x = pad;
-  state.arena.y = pad;
-  state.arena.w = state.canvasRect.width - pad * 2;
-  state.arena.h = state.canvasRect.height - pad * 2;
+  const sidePadding = Math.max(
+    ARENA_MIN_SIDE_PADDING,
+    state.canvasRect.width * ARENA_SIDE_PADDING_RATIO
+  );
+  const topBoundary = hudBottomOffset() + ARENA_TOP_GAP;
+  const bottomPadding = Math.max(
+    ARENA_MIN_BOTTOM_PADDING,
+    state.canvasRect.height * 0.02
+  );
+
+  const availableWidth = Math.max(120, state.canvasRect.width - sidePadding * 2);
+  const availableHeight = Math.max(120, state.canvasRect.height - topBoundary - bottomPadding);
+
+  const arenaWidth = Math.min(availableWidth, availableHeight * ARENA_ASPECT_RATIO);
+  const arenaHeight = arenaWidth / ARENA_ASPECT_RATIO;
+  const maxArenaX = Math.max(0, state.canvasRect.width - arenaWidth);
+  const maxArenaY = Math.max(0, state.canvasRect.height - arenaHeight);
+
+  state.arena.x = Math.round(clamp((state.canvasRect.width - arenaWidth) * 0.5, 0, maxArenaX));
+  state.arena.y = Math.round(clamp(topBoundary + (availableHeight - arenaHeight) * 0.5, 0, maxArenaY));
+  state.arena.w = Math.round(arenaWidth);
+  state.arena.h = Math.round(arenaHeight);
   updateBallRadiusFromCanvas();
 
   if (state.levels.length) {

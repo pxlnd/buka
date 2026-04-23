@@ -167,6 +167,8 @@ body[data-level-skin='4'] {
 }
 
 .game-header {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -236,12 +238,15 @@ body[data-level-skin='4'] {
 
 .progress-wrap {
   position: relative;
+  z-index: 2;
   width: min(240px, 100%);
   align-self: start;
   padding: 2px 8px;
 }
 
 .lives-wrap {
+  position: relative;
+  z-index: 2;
   width: min(240px, 100%);
   align-self: start;
   display: flex;
@@ -329,15 +334,14 @@ body[data-level-skin='4'] {
 }
 
 .board-card {
-  position: relative;
-  width: min(100vw, 450px, calc((100dvh - 178px) * 0.85));
-  aspect-ratio: 0.85;
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
   margin: 0;
-  align-self: center;
-  justify-self: center;
-  margin-bottom: 50px;
-  padding: 0px;
+  padding: 0;
   overflow: hidden;
+  z-index: 1;
 }
 
 #gameCanvas {
@@ -611,8 +615,9 @@ body[data-level-skin='4'] {
 
 @media (max-width: 390px) {
   .board-card {
-    width: min(90vw, 340px, calc((100dvh - 172px) * 0.92));
-    margin: 0px;
+    width: 100vw;
+    height: 100dvh;
+    margin: 0;
   }
 
   .debug-panel {
@@ -679,9 +684,8 @@ body[data-level-skin='4'] {
   }
 
   .board-card {
-    width: min(70vw, 300px, calc((100dvh - 126px) * 0.92));
-    align-self: center;
-    justify-self: center;
-    margin: 0px;
+    width: 100vw;
+    height: 100dvh;
+    margin: 0;
   }
 }
