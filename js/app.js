@@ -1,3 +1,5 @@
+import { createGameAudioSystem } from './audio-system.js';
+
 const STAGES_PER_LEVEL = 5;
 const LIVES_PER_STAGE = 3;
 const DEFAULT_LEVEL_VISUALS = Object.freeze({
@@ -336,6 +338,7 @@ let stageTransitionToken = 0;
 let stageTransitionCommitTimeoutId = 0;
 let stageTransitionHideTimeoutId = 0;
 let activeStageTransitionToken = 0;
+const gameAudio = createGameAudioSystem();
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -3625,6 +3628,8 @@ function hideLoseOverlay() {
 }
 
 function showLoseOverlay() {
+  gameAudio.playFail();
+
   const screen = syncLoseScreenState();
   if (screen) {
     screen.show();
@@ -4189,6 +4194,7 @@ function nextStageOrLevel() {
 function reflectByNormal(nx, ny) {
   const speedAlongNormal = state.ball.vx * nx + state.ball.vy * ny;
   if (speedAlongNormal < 0) {
+    gameAudio.playWallCollision(-speedAlongNormal);
     state.ball.vx -= 2 * speedAlongNormal * nx;
     state.ball.vy -= 2 * speedAlongNormal * ny;
   }
@@ -4199,6 +4205,7 @@ function reflectByNormal(nx, ny) {
 function onCorrectGate(gate) {
   if (state.stageLocked) return;
 
+  gameAudio.playWin();
   state.stageLocked = true;
   state.dragging = false;
   state.pull.x = 0;
@@ -6301,6 +6308,8 @@ function onPointerUp(evt) {
 
   if (force < 7) return;
 
+  gameAudio.playThrow();
+
   const speed = state.commonSettings.physics.impulse;
   state.ball.vx = launchX * speed;
   state.ball.vy = launchY * speed;
@@ -7271,6 +7280,7 @@ function bindUi() {
 
 async function init() {
   bindUi();
+  gameAudio.preload();
   setCommonSettings(await loadCommonSettings());
 
   state.levels = await loadLevelsFromJson();
