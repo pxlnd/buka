@@ -182,6 +182,7 @@ const debugStatus = document.getElementById('debugStatus');
 const state = {
   levels: [],
   levelIndex: 0,
+  displayLevelNumber: null,
   stageIndex: 0,
   stageLoadToken: 0,
   isStageLoading: false,
@@ -3223,9 +3224,12 @@ function findNearestObstacleEdge(point, obstacleIndex, maxDistance = 18) {
 }
 
 function updateHeader() {
-  const levelNumber = Number(currentLevel()?.number) || 1;
-  levelLabel.textContent = `LEVEL ${levelNumber}`;
-  syncUiSkinForLevel(levelNumber);
+  const loadedLevelNumber = Number(currentLevel()?.number) || 1;
+  const displayLevelNumber = normalizeRequestedLevelNumber(
+    state.displayLevelNumber ?? loadedLevelNumber
+  );
+  levelLabel.textContent = `LEVEL ${displayLevelNumber}`;
+  syncUiSkinForLevel(loadedLevelNumber);
 }
 
 function updateProgress() {
@@ -3900,14 +3904,26 @@ function syncDebugPanel() {
 }
 
 function loadStage(levelIndex, stageIndex, options = {}) {
-  const { preserveLives = false, forceRefillLives = false } = options;
+  const {
+    preserveLives = false,
+    forceRefillLives = false,
+    displayLevelNumber
+  } = options;
   const loadToken = state.stageLoadToken + 1;
   state.stageLoadToken = loadToken;
   state.isStageLoading = true;
   setStageLoaderVisible(true);
 
+  const previousLevelIndex = state.levelIndex;
   state.levelIndex = clamp(levelIndex, 0, state.levels.length - 1);
   state.stageIndex = clamp(stageIndex, 0, STAGES_PER_LEVEL - 1);
+
+  const loadedLevelNumber = Number(currentLevel()?.number) || 1;
+  if (displayLevelNumber != null) {
+    state.displayLevelNumber = normalizeRequestedLevelNumber(displayLevelNumber);
+  } else if (state.displayLevelNumber == null || previousLevelIndex !== state.levelIndex) {
+    state.displayLevelNumber = loadedLevelNumber;
+  }
 
   ensureCurrentStageShape();
   state.stageLocked = true;
@@ -6119,7 +6135,7 @@ function startLevelByNumber(levelNumber, {
 
   const loadedLevelNumber = Number(state.levels[index]?.number) || requested;
   pendingExternalLevelNumber = null;
-  loadStage(index, 0);
+  loadStage(index, 0, { displayLevelNumber: requested });
   if (showStatus) {
     if (loadedLevelNumber === requested) {
       setDebugStatus(`Загружен LEVEL ${requested}.`);
@@ -6919,19 +6935,21 @@ async function init() {
   }
 
   let initialLevelIndex = 0;
+  let initialDisplayLevelNumber = null;
   if (pendingExternalLevelNumber != null) {
     const pendingIndex = resolveLevelIndexForRequest(pendingExternalLevelNumber, {
       wrapIfMissing: true
     });
     if (pendingIndex >= 0) {
       initialLevelIndex = pendingIndex;
+      initialDisplayLevelNumber = pendingExternalLevelNumber;
     } else {
       setDebugStatus(`LEVEL ${pendingExternalLevelNumber} не найден. Загружен первый доступный уровень.`, true);
     }
     pendingExternalLevelNumber = null;
   }
 
-  loadStage(initialLevelIndex, 0);
+  loadStage(initialLevelIndex, 0, { displayLevelNumber: initialDisplayLevelNumber });
   resizeCanvas();
   requestAnimationFrame(frame);
 }
