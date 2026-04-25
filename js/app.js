@@ -61,6 +61,14 @@ const MAX_SAW_RADIUS = 0.25;
 const CHAINSAW_IMAGE_PATH = './images/chainsaw.png';
 const CHAINSAW_SHADOW_IMAGE_PATH = './images/chainsaw_shadow.png';
 const POINTER_IMAGE_PATH = './images/pointer.png';
+const STAGE_BACKGROUND_IMAGE_PATHS = Object.freeze([
+  './images/backgrounds/bubbles_bg.png',
+  './images/backgrounds/gradient_bg.png',
+  './images/backgrounds/green_bg.png',
+  './images/backgrounds/night_bg.png',
+  './images/backgrounds/sea_bg.png',
+  './images/backgrounds/water_bg.png'
+]);
 const LOSE_SCREEN_ASSET_BASE_PATH = './LoseScreenTransfer/assets';
 const SAW_ROTATION_SPEED = Math.PI * 1.2;
 const SAW_DEATH_ANIMATION_MS = 500;
@@ -97,6 +105,23 @@ const ARENA_MIN_SIDE_PADDING = 14;
 const ARENA_SIDE_PADDING_RATIO = 0.04;
 const ARENA_TOP_GAP = 12;
 const ARENA_MIN_BOTTOM_PADDING = 16;
+const BALL_APPEARANCE_DEFAULT = 'default';
+const BALL_APPEARANCE_OPTIONS = Object.freeze([
+  BALL_APPEARANCE_DEFAULT,
+  'ball',
+  'candy',
+  'eye',
+  'tennisball',
+  'watermelon'
+]);
+const BALL_IMAGE_COLOR_TOKENS = Object.freeze([
+  'red',
+  'yellow',
+  'green',
+  'blue',
+  'purple',
+  'pink'
+]);
 
 const COLOR_TOKENS = {
   yellow: '#f6c531',
@@ -158,12 +183,14 @@ const debugLoadLevelBtn = document.getElementById('debugLoadLevelBtn');
 const debugNewLevelBtn = document.getElementById('debugNewLevelBtn');
 const debugClearStageBtn = document.getElementById('debugClearStageBtn');
 const debugBallColor = document.getElementById('debugBallColor');
+const debugBallAppearance = document.getElementById('debugBallAppearance');
 const debugBallImpulse = document.getElementById('debugBallImpulse');
 const debugBallBraking = document.getElementById('debugBallBraking');
 const debugBallRadiusRatio = document.getElementById('debugBallRadiusRatio');
 const debugBackgroundColor = document.getElementById('debugBackgroundColor');
 const debugFieldColor = document.getElementById('debugFieldColor');
 const debugAimArrowColor = document.getElementById('debugAimArrowColor');
+const debugBackgroundImage = document.getElementById('debugBackgroundImage');
 const debugStageImage = document.getElementById('debugStageImage');
 const debugSaveSettingsBtn = document.getElementById('debugSaveSettingsBtn');
 const debugToolRow = document.getElementById('debugToolRow');
@@ -236,6 +263,11 @@ const state = {
     image: null,
     isReady: false
   },
+  stageBackground: {
+    src: '',
+    image: null,
+    isReady: false
+  },
   sawVisual: {
     src: CHAINSAW_IMAGE_PATH,
     image: null,
@@ -252,12 +284,19 @@ const state = {
     image: null,
     isReady: false
   },
+  ballAppearanceVisual: {
+    appearance: BALL_APPEARANCE_DEFAULT,
+    src: '',
+    image: null,
+    isReady: false
+  },
   ball: {
     x: 70,
     y: 300,
     r: 16,
     colorToken: 'yellow',
     color: COLOR_TOKENS.yellow,
+    appearance: BALL_APPEARANCE_DEFAULT,
     vx: 0,
     vy: 0,
     moving: false,
@@ -526,6 +565,27 @@ function ballOutlineValue(token) {
   return shadeColor(colorValue(token), 72);
 }
 
+function normalizeBallAppearance(value, fallback = BALL_APPEARANCE_DEFAULT) {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (BALL_APPEARANCE_OPTIONS.includes(raw)) return raw;
+  return BALL_APPEARANCE_OPTIONS.includes(fallback) ? fallback : BALL_APPEARANCE_DEFAULT;
+}
+
+function normalizeBallImageColorToken(value) {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return BALL_IMAGE_COLOR_TOKENS.includes(raw) ? raw : '';
+}
+
+function ballAppearanceImagePath(appearance, colorToken) {
+  const normalizedAppearance = normalizeBallAppearance(appearance, BALL_APPEARANCE_DEFAULT);
+  const normalizedColorToken = normalizeBallImageColorToken(colorToken);
+  if (normalizedAppearance === BALL_APPEARANCE_DEFAULT || !normalizedColorToken) {
+    return '';
+  }
+
+  return `./images/ball/${normalizedAppearance}_${normalizedColorToken}.png`;
+}
+
 function createPolygonPath(points) {
   if (!points.length) return;
   ctx.beginPath();
@@ -686,6 +746,11 @@ function normalizeStageImagePath(value, fallback = '') {
   return candidate || fallback;
 }
 
+function normalizeStageBackgroundImagePath(value, fallback = '') {
+  const candidate = typeof value === 'string' ? value.trim() : '';
+  return candidate || fallback;
+}
+
 function setDebugStatus(text, isError = false) {
   debugStatus.textContent = text;
   debugStatus.classList.toggle('error', Boolean(isError));
@@ -694,7 +759,9 @@ function setDebugStatus(text, isError = false) {
 function makeBlankStage(levelNumber = 1, stageIndex = 0) {
   return {
     ballColor: 'yellow',
+    ballAppearance: BALL_APPEARANCE_DEFAULT,
     start: { x: 0.14, y: 0.84 },
+    backgroundImage: '',
     image: defaultStageImagePath(levelNumber, stageIndex),
     polygon: defaultPolygon(),
     gates: [],
@@ -1096,7 +1163,15 @@ function normalizeStage(stage, levelNumber = 1, stageIndex = 0) {
   const polygon = normalizePolygon(stage?.polygon || stage?.field?.polygon || stage?.field?.points);
 
   const ballColor = isValidColorToken(stage?.ballColor) ? stage.ballColor : 'yellow';
+  const ballAppearance = normalizeBallAppearance(
+    stage?.ballAppearance ?? stage?.ballSkin ?? stage?.ballStyle,
+    BALL_APPEARANCE_DEFAULT
+  );
   const start = normalizeStart(stage?.start, polygon);
+  const backgroundImage = normalizeStageBackgroundImagePath(
+    stage?.backgroundImage ?? stage?.background?.image ?? stage?.bgImage,
+    ''
+  );
   const image = normalizeStageImagePath(
     stage?.image ?? stage?.levelImage ?? stage?.imagePath,
     defaultStageImagePath(levelNumber, stageIndex)
@@ -1122,7 +1197,9 @@ function normalizeStage(stage, levelNumber = 1, stageIndex = 0) {
 
   return {
     ballColor,
+    ballAppearance,
     start,
+    backgroundImage,
     image,
     polygon,
     gates,
@@ -1188,7 +1265,7 @@ function normalizeLevel(rawLevel, fileName = null) {
 }
 
 function serializeStage(stage, levelNumber, stageIndex) {
-  return {
+  const serializedStage = {
     ballColor: stage.ballColor,
     start: {
       x: round(stage.start.x),
@@ -1256,6 +1333,18 @@ function serializeStage(stage, levelNumber, stageIndex) {
       }))
     }))
   };
+
+  const ballAppearance = normalizeBallAppearance(stage.ballAppearance, BALL_APPEARANCE_DEFAULT);
+  if (ballAppearance !== BALL_APPEARANCE_DEFAULT) {
+    serializedStage.ballAppearance = ballAppearance;
+  }
+
+  const backgroundImage = normalizeStageBackgroundImagePath(stage.backgroundImage, '');
+  if (backgroundImage) {
+    serializedStage.backgroundImage = backgroundImage;
+  }
+
+  return serializedStage;
 }
 
 function serializeLevel(level) {
@@ -1427,6 +1516,36 @@ function currentStageImagePath(level = null, stage = null, stageIndex = state.st
   return normalizeStageImagePath(
     targetStage?.image,
     defaultStageImagePath(levelNumber, stageIndex)
+  );
+}
+
+function currentStageBackgroundImagePath(level = null, stage = null, stageIndex = state.stageIndex) {
+  const targetLevel = level || (state.levels.length ? currentLevel() : null);
+  const targetStage = stage || (targetLevel ? targetLevel.stages[stageIndex] : null);
+
+  return normalizeStageBackgroundImagePath(
+    targetStage?.backgroundImage,
+    ''
+  );
+}
+
+function currentStageBallAppearance(level = null, stage = null, stageIndex = state.stageIndex) {
+  const targetLevel = level || (state.levels.length ? currentLevel() : null);
+  const targetStage = stage || (targetLevel ? targetLevel.stages[stageIndex] : null);
+
+  return normalizeBallAppearance(
+    targetStage?.ballAppearance,
+    BALL_APPEARANCE_DEFAULT
+  );
+}
+
+function currentStageBallAppearanceImagePath(level = null, stage = null, stageIndex = state.stageIndex) {
+  const targetLevel = level || (state.levels.length ? currentLevel() : null);
+  const targetStage = stage || (targetLevel ? targetLevel.stages[stageIndex] : null);
+
+  return ballAppearanceImagePath(
+    currentStageBallAppearance(targetLevel, targetStage, stageIndex),
+    targetStage?.ballColor
   );
 }
 
@@ -1992,9 +2111,88 @@ async function syncCurrentStageImage({ preloadLevel = false } = {}) {
   return currentImage;
 }
 
+async function syncCurrentStageBackgroundImage({ preloadLevel = false } = {}) {
+  if (!state.levels.length) return null;
+
+  const level = currentLevel();
+  const stage = currentStage();
+  const imagePath = currentStageBackgroundImagePath(level, stage, state.stageIndex);
+  stage.backgroundImage = imagePath;
+
+  state.stageBackground.src = imagePath;
+  state.stageBackground.image = null;
+  state.stageBackground.isReady = false;
+
+  const loadPaths = preloadLevel
+    ? Array.from(new Set(level.stages
+      .map((entry, index) => currentStageBackgroundImagePath(level, entry, index))
+      .filter(Boolean)))
+    : (imagePath ? [imagePath] : []);
+
+  if (!loadPaths.length) {
+    return {
+      path: imagePath,
+      image: null,
+      isReady: false
+    };
+  }
+
+  const results = await Promise.all(loadPaths.map(preloadStageImage));
+  const currentImage = results.find((item) => item.path === imagePath)
+    || await preloadStageImage(imagePath);
+
+  if (state.stageBackground.src !== imagePath) return currentImage;
+
+  state.stageBackground.image = currentImage.isReady ? currentImage.image : null;
+  state.stageBackground.isReady = currentImage.isReady;
+  return currentImage;
+}
+
+async function syncCurrentBallAppearanceVisual({ preloadLevel = false } = {}) {
+  if (!state.levels.length) return null;
+
+  const level = currentLevel();
+  const stage = currentStage();
+  const appearance = currentStageBallAppearance(level, stage, state.stageIndex);
+  const imagePath = currentStageBallAppearanceImagePath(level, stage, state.stageIndex);
+  stage.ballAppearance = appearance;
+
+  state.ball.appearance = appearance;
+  state.ballAppearanceVisual.appearance = appearance;
+  state.ballAppearanceVisual.src = imagePath;
+  state.ballAppearanceVisual.image = null;
+  state.ballAppearanceVisual.isReady = false;
+
+  const loadPaths = preloadLevel
+    ? Array.from(new Set(level.stages
+      .map((entry, index) => currentStageBallAppearanceImagePath(level, entry, index))
+      .filter(Boolean)))
+    : (imagePath ? [imagePath] : []);
+
+  if (!loadPaths.length) {
+    return {
+      path: imagePath,
+      image: null,
+      isReady: false
+    };
+  }
+
+  const results = await Promise.all(loadPaths.map(preloadStageImage));
+  const currentImage = results.find((item) => item.path === imagePath)
+    || await preloadStageImage(imagePath);
+
+  if (state.ballAppearanceVisual.src !== imagePath) return currentImage;
+
+  state.ballAppearanceVisual.image = currentImage.isReady ? currentImage.image : null;
+  state.ballAppearanceVisual.isReady = currentImage.isReady;
+  return currentImage;
+}
+
 async function completeStageLoad(token) {
   try {
     await Promise.all([
+      syncCurrentBallAppearanceVisual({ preloadLevel: true }),
+      syncCurrentStageBackgroundImage({ preloadLevel: true }),
       syncCurrentStageImage({ preloadLevel: true }),
       ensureSawImageReady(),
       ensureSawShadowImageReady(),
@@ -2328,6 +2526,7 @@ function updateBallRadiusFromCanvas() {
 function syncBallWithStage() {
   const stage = currentStage();
   stage.start = normalizeStart(stage.start, stage.polygon);
+  stage.ballAppearance = normalizeBallAppearance(stage.ballAppearance, BALL_APPEARANCE_DEFAULT);
   updateBallRadiusFromCanvas();
 
   state.ball.x = state.arena.x + stage.start.x * state.arena.w;
@@ -2339,6 +2538,7 @@ function syncBallWithStage() {
   state.ball.hidden = false;
   state.ball.colorToken = stage.ballColor;
   state.ball.color = colorValue(stage.ballColor);
+  state.ball.appearance = stage.ballAppearance;
 }
 
 function clearSawDeathAnimation() {
@@ -3568,6 +3768,16 @@ function updateCurrentStageImageFromInputs() {
   return true;
 }
 
+function updateCurrentStageBackgroundImageFromInputs() {
+  if (!state.levels.length) return true;
+
+  const stage = currentStage();
+  stage.backgroundImage = normalizeStageBackgroundImagePath(debugBackgroundImage.value, '');
+  syncStageBackgroundImageSelect(stage.backgroundImage);
+  void syncCurrentStageBackgroundImage();
+  return true;
+}
+
 function updateCommonSettingsFromInputs() {
   updatePhysicsSettingsFromInputs();
   return true;
@@ -4082,11 +4292,13 @@ function syncDebugPanel() {
 
   debugLevelNumber.value = String(level.number);
   debugBallColor.value = stage.ballColor;
+  debugBallAppearance.value = normalizeBallAppearance(stage.ballAppearance, BALL_APPEARANCE_DEFAULT);
   syncPhysicsInputs();
   const visuals = currentLevelVisualSettings(level);
   debugBackgroundColor.value = visuals.background;
   debugFieldColor.value = visuals.field;
   debugAimArrowColor.value = visuals.aimArrow;
+  syncStageBackgroundImageSelect(currentStageBackgroundImagePath(level, stage, state.stageIndex));
   debugStageImage.value = currentStageImagePath(level, stage, state.stageIndex);
 
   if (!Object.keys(COLOR_TOKENS).includes(debugGateColor.value)) {
@@ -4875,6 +5087,59 @@ function drawReferenceBall(pulse = 0, pulseColor = '#fff', opacity = 1) {
   ctx.restore();
 }
 
+function drawImageBall(pulse = 0, pulseColor = '#fff', opacity = 1) {
+  if (!state.ballAppearanceVisual.isReady || !state.ballAppearanceVisual.image) {
+    drawReferenceBall(pulse, pulseColor, opacity);
+    return;
+  }
+
+  const scale = clamp(Number(state.ball.renderScale) || 1, 0.02, 1.2);
+  const requestedRadius = state.ball.r * scale * 1.35;
+  const ringAlpha = 1 - pulse;
+  const alpha = clamp(Number(opacity) || 1, 0, 1);
+  if (alpha <= 0.001) return;
+
+  const cx = state.ball.x;
+  const cy = state.ball.y;
+  const sceneWidth = Number(state.canvasRect?.width) || (canvas.width / Math.max(1, state.dpr));
+  const sceneHeight = Number(state.canvasRect?.height) || (canvas.height / Math.max(1, state.dpr));
+  const edgeDistance = Math.min(cx, cy, sceneWidth - cx, sceneHeight - cy);
+  const edgePadding = 2;
+  const radius = Math.min(requestedRadius, Math.max(0, edgeDistance - edgePadding));
+  if (radius <= 0.6) return;
+  const radiusVisibility = clamp(radius / Math.max(1, requestedRadius), 0, 1);
+
+  ctx.save();
+  ctx.globalAlpha = alpha * radiusVisibility;
+  ctx.drawImage(
+    state.ballAppearanceVisual.image,
+    cx - radius,
+    cy - radius,
+    radius * 2,
+    radius * 2
+  );
+
+  if (pulse > 0) {
+    const requestedRingRadius = state.ball.r * scale + pulse * 20;
+    const safeRingRadius = Math.min(
+      requestedRingRadius,
+      Math.max(0, edgeDistance - 3.2)
+    );
+    if (safeRingRadius > radius + 0.4) {
+      const ringStrength = clamp(safeRingRadius / Math.max(1, requestedRingRadius), 0, 1);
+      const ringOpacity = clamp(ringAlpha * ringStrength, 0, 1);
+      const normalizedPulseColor = normalizeHexColor(pulseColor, '#ffffff');
+      ctx.beginPath();
+      ctx.arc(cx, cy, safeRingRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = hexToRgba(normalizedPulseColor, ringOpacity * 0.82);
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
 function drawSawDeathParticles() {
   if (!state.sawDeath.active || !state.sawDeath.particles.length) return;
 
@@ -5072,7 +5337,12 @@ function drawWrongGateParticles() {
 
 function drawBall(pulse = 0, pulseColor = '#fff', opacity = 1) {
   if (state.sawDeath.active || state.ball.hidden) return;
-  drawReferenceBall(pulse, pulseColor, opacity);
+  if (state.ball.appearance === BALL_APPEARANCE_DEFAULT) {
+    drawReferenceBall(pulse, pulseColor, opacity);
+    return;
+  }
+
+  drawImageBall(pulse, pulseColor, opacity);
 }
 
 function drawAimFromPull(rawPullX, rawPullY) {
@@ -5358,6 +5628,24 @@ function drawArena(opacity = 1) {
   drawDefaultArena(points, opacity);
 }
 
+function drawStageBackgroundImage() {
+  if (!state.stageBackground.isReady || !state.stageBackground.image) return;
+
+  const image = state.stageBackground.image;
+  const sourceWidth = Number(image.naturalWidth || image.width) || 0;
+  const sourceHeight = Number(image.naturalHeight || image.height) || 0;
+  if (sourceWidth <= 0 || sourceHeight <= 0) return;
+  if (canvas.width <= 0 || canvas.height <= 0) return;
+
+  const scale = Math.max(canvas.width / sourceWidth, canvas.height / sourceHeight);
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+  const drawX = (canvas.width - drawWidth) * 0.5;
+  const drawY = (canvas.height - drawHeight) * 0.5;
+
+  ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+}
+
 function drawGameplayStageImage() {
   if (!state.stageImage.isReady || !state.stageImage.image) return;
 
@@ -5562,6 +5850,7 @@ function drawScene(pulse = 0, pulseColor = '#ffffff') {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = canvasBackground;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawStageBackgroundImage();
   if (state.isStageLoading) return;
 
   ctx.save();
@@ -6388,6 +6677,56 @@ function fillColorSelect(select) {
   });
 }
 
+function ballAppearanceLabel(value) {
+  if (value === BALL_APPEARANCE_DEFAULT) return 'По умолчанию (код)';
+  return value;
+}
+
+function fillBallAppearanceSelect(select) {
+  select.innerHTML = '';
+  BALL_APPEARANCE_OPTIONS.forEach((appearance) => {
+    const option = document.createElement('option');
+    option.value = appearance;
+    option.textContent = ballAppearanceLabel(appearance);
+    select.appendChild(option);
+  });
+}
+
+function stageBackgroundImageLabel(path) {
+  const parts = String(path || '').split('/');
+  return parts[parts.length - 1] || path;
+}
+
+function fillStageBackgroundImageSelect(select) {
+  select.innerHTML = '';
+
+  const noneOption = document.createElement('option');
+  noneOption.value = '';
+  noneOption.textContent = 'Нет (только цвет)';
+  select.appendChild(noneOption);
+
+  STAGE_BACKGROUND_IMAGE_PATHS.forEach((path) => {
+    const option = document.createElement('option');
+    option.value = path;
+    option.textContent = stageBackgroundImageLabel(path);
+    select.appendChild(option);
+  });
+}
+
+function syncStageBackgroundImageSelect(path) {
+  const normalized = normalizeStageBackgroundImagePath(path, '');
+  const hasOption = Array.from(debugBackgroundImage.options).some((option) => option.value === normalized);
+
+  if (!hasOption && normalized) {
+    const option = document.createElement('option');
+    option.value = normalized;
+    option.textContent = stageBackgroundImageLabel(normalized);
+    debugBackgroundImage.appendChild(option);
+  }
+
+  debugBackgroundImage.value = normalized;
+}
+
 function setEditorTool(tool) {
   state.editor.tool = tool;
   state.editor.dragVertexIndex = -1;
@@ -6599,6 +6938,7 @@ async function saveCurrentLevel() {
     state.editor.isSaving = true;
     debugSaveBtn.disabled = true;
     if (!updateCurrentLevelColorsFromInputs()) return;
+    if (!updateCurrentStageBackgroundImageFromInputs()) return;
     if (!updateCurrentStageImageFromInputs()) return;
 
     const level = currentLevel();
@@ -6648,7 +6988,9 @@ async function saveCommonSettings() {
 
 function bindUi() {
   fillColorSelect(debugBallColor);
+  fillBallAppearanceSelect(debugBallAppearance);
   fillColorSelect(debugGateColor);
+  fillStageBackgroundImageSelect(debugBackgroundImage);
   hydrateQuitOverlayAssets();
   hideQuitOverlay();
   resetStageTransitionFade();
@@ -6755,6 +7097,18 @@ function bindUi() {
     stage.ballColor = debugBallColor.value;
     state.ball.colorToken = stage.ballColor;
     state.ball.color = colorValue(stage.ballColor);
+    void syncCurrentBallAppearanceVisual();
+    setDebugStatus('Цвет шара обновлен. Нажмите "Сохранить уровень в JSON".');
+    renderDebugLists();
+  });
+
+  debugBallAppearance.addEventListener('change', () => {
+    const stage = currentStage();
+    stage.ballAppearance = normalizeBallAppearance(debugBallAppearance.value, BALL_APPEARANCE_DEFAULT);
+    state.ball.appearance = stage.ballAppearance;
+    debugBallAppearance.value = stage.ballAppearance;
+    void syncCurrentBallAppearanceVisual();
+    setDebugStatus('Внешний вид шара обновлен. Нажмите "Сохранить уровень в JSON".');
     renderDebugLists();
   });
 
@@ -6786,6 +7140,11 @@ function bindUi() {
   debugAimArrowColor.addEventListener('change', () => {
     if (!updateCurrentLevelColorsFromInputs()) return;
     setDebugStatus('Цвет стрелки направления обновлен. Нажмите "Сохранить уровень в JSON".');
+  });
+
+  debugBackgroundImage.addEventListener('change', () => {
+    if (!updateCurrentStageBackgroundImageFromInputs()) return;
+    setDebugStatus('Фон этапа обновлен. Нажмите "Сохранить уровень в JSON".');
   });
 
   debugStageImage.addEventListener('change', () => {
