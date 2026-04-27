@@ -176,6 +176,7 @@ const livesWrap = document.querySelector('.lives-wrap');
 const debugCloseBtn = document.getElementById('debugCloseBtn');
 const debugPanel = document.getElementById('debugPanel');
 const debugToggleBtn = document.getElementById('debugToggleBtn');
+const debugUniWebViewEventsEnabled = document.getElementById('debugUniWebViewEventsEnabled');
 const debugEditorMode = document.getElementById('debugEditorMode');
 const debugLevelSelect = document.getElementById('debugLevelSelect');
 const debugStageSelect = document.getElementById('debugStageSelect');
@@ -341,6 +342,7 @@ const state = {
   canvasRect: null,
   editor: {
     panelOpen: false,
+    uniWebViewEventsEnabled: true,
     enabled: false,
     tool: 'start',
     draftObstacle: null,
@@ -1652,10 +1654,19 @@ function loadStageWithTransition(levelIndex, stageIndex, options = {}) {
   }, STAGE_TRANSITION_FADE_IN_MS);
 }
 
+function sendUniWebViewUrl(url) {
+  const target = String(url || '').trim();
+  if (!target.startsWith('uniwebview://')) return false;
+  if (!state.editor.uniWebViewEventsEnabled) return false;
+
+  window.location.href = target;
+  return true;
+}
+
 function trackStageEventForUniWebView(eventActionPrefix) {
   const levelNumber = clamp(Number(currentLevel()?.number) || 1, 1, 9999);
   const stageNumber = clamp(Number(state.stageIndex) + 1 || 1, 1, STAGES_PER_LEVEL);
-  window.location.href = `uniwebview://track?event=stage&event_action=${eventActionPrefix}_${levelNumber}_${stageNumber}`;
+  sendUniWebViewUrl(`uniwebview://track?event=stage&event_action=${eventActionPrefix}_${levelNumber}_${stageNumber}`);
 }
 
 function getQuitCoinsCount() {
@@ -1669,13 +1680,13 @@ function getQuitHeartsCount() {
 function closeViaUniWebViewWithResources() {
   const coinsCount = getQuitCoinsCount();
   const heartsCount = getQuitHeartsCount();
-  window.location = `uniwebview://close?coins=${coinsCount.toString()}&hearts=${heartsCount.toString()}`;
+  sendUniWebViewUrl(`uniwebview://close?coins=${coinsCount.toString()}&hearts=${heartsCount.toString()}`);
 }
 
 function completeLevelViaUniWebViewWithResources() {
   const coinsCount = getQuitCoinsCount();
   const heartsCount = getQuitHeartsCount();
-  window.location = `uniwebview://complete?coins=${coinsCount.toString()}&hearts=${heartsCount.toString()}`;
+  sendUniWebViewUrl(`uniwebview://complete?coins=${coinsCount.toString()}&hearts=${heartsCount.toString()}`);
 }
 
 function hideQuitOverlay() {
@@ -3791,7 +3802,7 @@ function ensureLoseScreen() {
   loseScreen = new LoseScreen({
     assetBasePath: LOSE_SCREEN_ASSET_BASE_PATH,
     onRewardRequest: () => {
-      window.location = "uniwebview://reward";
+      sendUniWebViewUrl('uniwebview://reward');
     },
     onRewardResult: () => {
       loadStage(state.levelIndex, state.stageIndex, { forceRefillLives: true });
@@ -3802,10 +3813,10 @@ function ensureLoseScreen() {
       loadStage(state.levelIndex, state.stageIndex, { forceRefillLives: true });
     },
     onClose: () => {
-      window.location = `uniwebview://close?coins=${coinsCount.toString()}&hearts=${heartsCount.toString()}`;
+      closeViaUniWebViewWithResources();
     },
     onPurchase: () => {
-      window.location.href = "uniwebview://subscription_request";
+      sendUniWebViewUrl('uniwebview://subscription_request');
     }
   });
 
@@ -4306,6 +4317,9 @@ function syncDebugPanel() {
     debugGateColor.value = stage.ballColor;
   }
 
+  if (debugUniWebViewEventsEnabled) {
+    debugUniWebViewEventsEnabled.checked = state.editor.uniWebViewEventsEnabled;
+  }
   debugEditorMode.checked = state.editor.enabled;
 
   const toolButtons = debugToolRow.querySelectorAll('.tool-btn');
@@ -6528,7 +6542,7 @@ function handleEditorPointerUp() {
 }
 
 function sendTapScreenEvent() {
-  window.location.href = "uniwebview://track?event=tap&event_action=screen";
+  sendUniWebViewUrl('uniwebview://track?event=tap&event_action=screen');
 }
 
 function onAnyPointerDown(evt) {
@@ -7023,6 +7037,16 @@ function bindUi() {
   if (debugToggleBtn) {
     debugToggleBtn.addEventListener('click', () => {
       setDebugPanelOpen(!state.editor.panelOpen);
+    });
+  }
+  if (debugUniWebViewEventsEnabled) {
+    debugUniWebViewEventsEnabled.addEventListener('change', () => {
+      state.editor.uniWebViewEventsEnabled = debugUniWebViewEventsEnabled.checked;
+      setDebugStatus(
+        state.editor.uniWebViewEventsEnabled
+          ? 'UniWebView ивенты включены.'
+          : 'UniWebView ивенты выключены.'
+      );
     });
   }
 
