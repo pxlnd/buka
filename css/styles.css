@@ -387,6 +387,39 @@ body[data-level-skin='4'] {
   transition: transform 0.24s ease;
 }
 
+.debug-toggle-btn {
+  position: fixed;
+  right: calc(10px + env(safe-area-inset-right));
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  width: 40px;
+  height: 40px;
+  border: 0px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.82);
+  font-family: 'Open Sans', 'Trebuchet MS', sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  z-index: 55;
+  transition: background-color 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+}
+
+.debug-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.62);
+}
+
+.debug-toggle-btn:active {
+  opacity: 0.72;
+}
+
+.debug-toggle-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.95);
+  outline-offset: 2px;
+}
+
 .debug-panel.is-open {
   transform: translateX(0);
 }
