@@ -175,6 +175,7 @@ const livesWrap = document.querySelector('.lives-wrap');
 
 const debugCloseBtn = document.getElementById('debugCloseBtn');
 const debugPanel = document.getElementById('debugPanel');
+const debugToggleBtn = document.getElementById('debugToggleBtn');
 const debugEditorMode = document.getElementById('debugEditorMode');
 const debugLevelSelect = document.getElementById('debugLevelSelect');
 const debugStageSelect = document.getElementById('debugStageSelect');
@@ -7019,6 +7020,11 @@ function bindUi() {
   debugCloseBtn.addEventListener('click', () => {
     setDebugPanelOpen(false);
   });
+  if (debugToggleBtn) {
+    debugToggleBtn.addEventListener('click', () => {
+      setDebugPanelOpen(!state.editor.panelOpen);
+    });
+  }
 
   debugEditorMode.addEventListener('change', () => {
     state.editor.enabled = debugEditorMode.checked;
