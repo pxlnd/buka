@@ -396,7 +396,7 @@ body[data-level-skin='4'] {
   border: 0px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.82);
+  color: transparent;
   font-family: 'Open Sans', 'Trebuchet MS', sans-serif;
   font-size: 10px;
   font-weight: 800;
